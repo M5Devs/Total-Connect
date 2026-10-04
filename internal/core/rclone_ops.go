@@ -291,6 +291,24 @@ func (r *RcloneEngine) CreateRemote(ctx context.Context, name string, remoteType
 
 	cleanName := strings.TrimSuffix(name, ":")
 
+	if params == nil {
+		params = make(map[string]string)
+	}
+
+	// Explicitly set key_use_agent = false by default for all SFTP configurations unless user explicitly checked "Use SSH Agent"
+	if strings.EqualFold(remoteType, "sftp") {
+		hasKeyUseAgent := false
+		for k := range params {
+			if strings.EqualFold(k, "key_use_agent") {
+				hasKeyUseAgent = true
+				break
+			}
+		}
+		if !hasKeyUseAgent {
+			params["key_use_agent"] = "false"
+		}
+	}
+
 	config.FileSet(cleanName, "type", remoteType)
 
 	for k, v := range params {
@@ -311,6 +329,33 @@ func (r *RcloneEngine) CreateRemote(ctx context.Context, name string, remoteType
 	config.SaveConfig()
 
 	return nil
+}
+
+// GetRemoteConfig retrieves the type and configuration parameters for a given remote.
+func (r *RcloneEngine) GetRemoteConfig(ctx context.Context, name string) (string, map[string]string, error) {
+	if name == "" {
+		return "", nil, fmt.Errorf("remote name cannot be empty")
+	}
+
+	cleanName := strings.TrimSuffix(name, ":")
+	dump := config.DumpRcRemote(cleanName)
+	if dump == nil {
+		return "", nil, fmt.Errorf("remote %q not found", cleanName)
+	}
+
+	params := make(map[string]string)
+	remoteType := ""
+
+	for k, v := range dump {
+		strVal := fmt.Sprintf("%v", v)
+		if k == "type" {
+			remoteType = strVal
+		} else {
+			params[k] = strVal
+		}
+	}
+
+	return remoteType, params, nil
 }
 
 // DeleteRemote removes a remote from the rclone configuration and persists it.

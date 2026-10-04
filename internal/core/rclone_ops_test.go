@@ -207,3 +207,59 @@ func TestRcloneEngineMoveFileAndDir(t *testing.T) {
 		t.Errorf("expected moved directory content to exist at %s", movedFilePath)
 	}
 }
+
+func TestRcloneEngineSFTPKeyUseAgentDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "rclone.conf")
+
+	engine, err := NewRcloneEngine(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to create RcloneEngine: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Create SFTP remote without key_use_agent
+	params := map[string]string{
+		"host": "sftp.example.com",
+		"user": "sftpuser",
+		"pass": "sftppass",
+	}
+
+	err = engine.CreateRemote(ctx, "TestSFTP", "sftp", params)
+	if err != nil {
+		t.Fatalf("CreateRemote SFTP failed: %v", err)
+	}
+
+	val := config.FileGet("TestSFTP", "key_use_agent")
+	if val != "false" {
+		t.Errorf("expected key_use_agent to default to 'false', got %q", val)
+	}
+
+	remoteType, cfgParams, err := engine.GetRemoteConfig(ctx, "TestSFTP")
+	if err != nil {
+		t.Fatalf("GetRemoteConfig failed: %v", err)
+	}
+	if remoteType != "sftp" {
+		t.Errorf("expected remoteType 'sftp', got %q", remoteType)
+	}
+	if cfgParams["key_use_agent"] != "false" {
+		t.Errorf("expected key_use_agent='false' in GetRemoteConfig, got %q", cfgParams["key_use_agent"])
+	}
+
+	// 2. Create SFTP remote WITH key_use_agent = true
+	paramsWithAgent := map[string]string{
+		"host":          "sftp2.example.com",
+		"user":          "sftpuser",
+		"key_use_agent": "true",
+	}
+	err = engine.CreateRemote(ctx, "TestSFTPWithAgent", "sftp", paramsWithAgent)
+	if err != nil {
+		t.Fatalf("CreateRemote SFTP with agent failed: %v", err)
+	}
+
+	valWithAgent := config.FileGet("TestSFTPWithAgent", "key_use_agent")
+	if valWithAgent != "true" {
+		t.Errorf("expected key_use_agent to be 'true', got %q", valWithAgent)
+	}
+}

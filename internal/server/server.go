@@ -49,6 +49,7 @@ func (s *Server) routes() {
 
 	// API routes
 	s.mux.HandleFunc("GET /api/remotes", s.handleListRemotes)
+	s.mux.HandleFunc("GET /api/remotes/config", s.handleGetRemoteConfig)
 	s.mux.HandleFunc("POST /api/remotes/create", s.handleCreateRemote)
 	s.mux.HandleFunc("POST /api/remotes/delete", s.handleDeleteRemote)
 	s.mux.HandleFunc("GET /api/entries", s.handleListEntries)
@@ -77,6 +78,26 @@ func (s *Server) handleListRemotes(w http.ResponseWriter, r *http.Request) {
 
 	renderJSON(w, http.StatusOK, map[string]interface{}{
 		"remotes": remotes,
+	})
+}
+
+func (s *Server) handleGetRemoteConfig(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		renderError(w, http.StatusBadRequest, "remote name is required")
+		return
+	}
+
+	remoteType, params, err := s.engine.GetRemoteConfig(r.Context(), name)
+	if err != nil {
+		renderError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	renderJSON(w, http.StatusOK, map[string]interface{}{
+		"name":       name,
+		"type":       remoteType,
+		"parameters": params,
 	})
 }
 

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,6 +21,15 @@ func (m *mockStorageEngine) ListRemotes(ctx context.Context) ([]string, error) {
 func (m *mockStorageEngine) CreateRemote(ctx context.Context, name string, remoteType string, params map[string]string) error {
 	m.remotes = append(m.remotes, name)
 	return nil
+}
+
+func (m *mockStorageEngine) GetRemoteConfig(ctx context.Context, name string) (string, map[string]string, error) {
+	for _, r := range m.remotes {
+		if r == name {
+			return "mock", map[string]string{}, nil
+		}
+	}
+	return "", nil, fmt.Errorf("remote not found")
 }
 
 func (m *mockStorageEngine) DeleteRemote(ctx context.Context, name string) error {
