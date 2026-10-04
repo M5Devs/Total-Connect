@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Total Connect</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">TOTAL CONNECT</span>
+      </div>
+      <div class="status-badge" id="connection-status">Online</div>
+    </header>
+
+    <!-- Mobile Tab Switcher (< 768px) -->
+    <nav class="mobile-tabs" id="mobile-tabs">
+      <button class="tab-btn active" id="tab-left" onclick="switchMobileTab('left')">
+        📂 Left Pane
+      </button>
+      <button class="tab-btn" id="tab-right" onclick="switchMobileTab('right')">
+        📁 Right Pane
+      </button>
+    </nav>
+
+    <!-- Main Dual-Pane Area -->
+    <main class="panes-container">
+      <!-- Left Pane -->
+      <section class="pane active" id="pane-left" onclick="setActivePane('left')">
+        <div class="pane-toolbar">
+          <div class="remote-picker">
+            <label for="remote-select-left">Remote:</label>
+            <select id="remote-select-left" onchange="onRemoteChange('left', this.value)">
+              <option value="local">Local Filesystem</option>
+            </select>
+          </div>
+          <div class="path-bar">
+            <button class="btn-icon" onclick="navigateParent('left')" title="Parent Directory">⬆</button>
+            <input type="text" id="path-input-left" class="path-input" readonly>
+          </div>
+        </div>
+
+        <div class="table-header">
+          <span class="col-check"><input type="checkbox" id="select-all-left" onchange="toggleSelectAll('left', this.checked)"></span>
+          <span class="col-name">Name</span>
+          <span class="col-size">Size</span>
+          <span class="col-mtime">Modified</span>
+        </div>
+
+        <div class="file-list" id="file-list-left">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="pane-footer" id="pane-footer-left">
+          0 items
+        </div>
+      </section>
+
+      <!-- Right Pane -->
+      <section class="pane" id="pane-right" onclick="setActivePane('right')">
+        <div class="pane-toolbar">
+          <div class="remote-picker">
+            <label for="remote-select-right">Remote:</label>
+            <select id="remote-select-right" onchange="onRemoteChange('right', this.value)">
+              <option value="local">Local Filesystem</option>
+            </select>
+          </div>
+          <div class="path-bar">
+            <button class="btn-icon" onclick="navigateParent('right')" title="Parent Directory">⬆</button>
+            <input type="text" id="path-input-right" class="path-input" readonly>
+          </div>
+        </div>
+
+        <div class="table-header">
+          <span class="col-check"><input type="checkbox" id="select-all-right" onchange="toggleSelectAll('right', this.checked)"></span>
+          <span class="col-name">Name</span>
+          <span class="col-size">Size</span>
+          <span class="col-mtime">Modified</span>
+        </div>
+
+        <div class="file-list" id="file-list-right">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="pane-footer" id="pane-footer-right">
+          0 items
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Action Toolbar -->
+    <footer class="action-toolbar">
+      <button class="action-btn primary" onclick="handleCopy()">
+        <span class="btn-icon-label">📋</span> Copy
+      </button>
+      <button class="action-btn warning" onclick="handleMove()">
+        <span class="btn-icon-label">🚚</span> Move
+      </button>
+      <button class="action-btn info" onclick="openMkdirModal()">
+        <span class="btn-icon-label">➕</span> New Folder
+      </button>
+      <button class="action-btn danger" onclick="handleDelete()">
+        <span class="btn-icon-label">🗑️</span> Delete
+      </button>
+      <button class="action-btn secondary" onclick="refreshActivePane()">
+        <span class="btn-icon-label">🔄</span> Refresh
+      </button>
+      <button class="action-btn secondary" onclick="openChangeRemoteModal()">
+        <span class="btn-icon-label">🌐</span> Remote
+      </button>
+    </footer>
+
+    <!-- Toasts / Notifications Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Modals -->
+    <div id="mkdir-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <h3>Create New Directory</h3>
+        <p id="mkdir-target-info">Target path:</p>
+        <input type="text" id="mkdir-input" class="modal-input" placeholder="Directory name">
+        <div class="modal-actions">
+          <button class="action-btn primary" onclick="confirmMkdir()">Create</button>
+          <button class="action-btn secondary" onclick="closeModal('mkdir-modal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="remote-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <h3>Select Remote for Active Pane</h3>
+        <select id="modal-remote-select" class="modal-select"></select>
+        <div class="modal-actions">
+          <button class="action-btn primary" onclick="confirmRemoteChange()">Select</button>
+          <button class="action-btn secondary" onclick="closeModal('remote-modal')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
