@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/rclone/rclone/backend/all" // Register all rclone backends
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configfile"
+	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fspath"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/sync"
@@ -276,4 +278,51 @@ func (r *RcloneEngine) Mkdir(ctx context.Context, path string) error {
 	}
 
 	return operations.Mkdir(ctx, f, remote)
+}
+
+// CreateRemote adds or updates a remote in the rclone configuration and persists it.
+func (r *RcloneEngine) CreateRemote(ctx context.Context, name string, remoteType string, params map[string]string) error {
+	if name == "" {
+		return fmt.Errorf("remote name cannot be empty")
+	}
+	if remoteType == "" {
+		return fmt.Errorf("remote type cannot be empty")
+	}
+
+	cleanName := strings.TrimSuffix(name, ":")
+
+	config.FileSet(cleanName, "type", remoteType)
+
+	for k, v := range params {
+		val := v
+		// Password obfuscation for rclone password fields
+		if strings.EqualFold(k, "pass") || strings.EqualFold(k, "password") {
+			if val != "" {
+				obsVal, err := obscure.Obscure(val)
+				if err != nil {
+					return fmt.Errorf("failed to obscure password: %w", err)
+				}
+				val = obsVal
+			}
+		}
+		config.FileSet(cleanName, k, val)
+	}
+
+	config.SaveConfig()
+
+	return nil
+}
+
+// DeleteRemote removes a remote from the rclone configuration and persists it.
+func (r *RcloneEngine) DeleteRemote(ctx context.Context, name string) error {
+	if name == "" {
+		return fmt.Errorf("remote name cannot be empty")
+	}
+
+	cleanName := strings.TrimSuffix(name, ":")
+	config.DeleteRemote(cleanName)
+
+	config.SaveConfig()
+
+	return nil
 }

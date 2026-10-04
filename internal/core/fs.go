@@ -29,6 +29,12 @@ type StorageEngine interface {
 	// ListRemotes lists all configured rclone remotes.
 	ListRemotes(ctx context.Context) ([]string, error)
 
+	// CreateRemote creates or updates a remote configuration.
+	CreateRemote(ctx context.Context, name string, remoteType string, params map[string]string) error
+
+	// DeleteRemote removes a remote configuration.
+	DeleteRemote(ctx context.Context, name string) error
+
 	// ListEntries lists files and directories at the given path (e.g. "remote:path" or "/local/path").
 	ListEntries(ctx context.Context, remotePath string) ([]models.FileItem, error)
 

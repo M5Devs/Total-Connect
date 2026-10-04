@@ -32,6 +32,22 @@ func (m *mockStorageEngine) ListRemotes(ctx context.Context) ([]string, error) {
 	return m.remotes, nil
 }
 
+func (m *mockStorageEngine) CreateRemote(ctx context.Context, name string, remoteType string, params map[string]string) error {
+	m.remotes = append(m.remotes, name)
+	return nil
+}
+
+func (m *mockStorageEngine) DeleteRemote(ctx context.Context, name string) error {
+	var filtered []string
+	for _, r := range m.remotes {
+		if r != name {
+			filtered = append(filtered, r)
+		}
+	}
+	m.remotes = filtered
+	return nil
+}
+
 func (m *mockStorageEngine) ListEntries(ctx context.Context, path string) ([]models.FileItem, error) {
 	if items, ok := m.entries[path]; ok {
 		return items, nil

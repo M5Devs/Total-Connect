@@ -29,6 +29,7 @@ async function initApp() {
   await loadPane('left');
   await loadPane('right');
   updateUI();
+  initWizard();
 }
 
 // API Calls
@@ -71,14 +72,30 @@ function populateRemoteSelectors() {
 
   const optionsHTML = ['<option value="local">Local Filesystem</option>']
     .concat(state.remotes.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`))
+    .concat(['<option value="__add_connection__">➕ + Add Connection...</option>'])
     .join('');
 
   if (leftSelect) leftSelect.innerHTML = optionsHTML;
   if (rightSelect) rightSelect.innerHTML = optionsHTML;
-  if (modalSelect) modalSelect.innerHTML = optionsHTML;
+
+  const modalOptionsHTML = ['<option value="local">Local Filesystem</option>']
+    .concat(state.remotes.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`))
+    .join('');
+
+  if (modalSelect) modalSelect.innerHTML = modalOptionsHTML;
 
   if (leftSelect) leftSelect.value = state.panes.left.remote;
   if (rightSelect) rightSelect.value = state.panes.right.remote;
+}
+
+function onRemoteSelectChange(paneId, val) {
+  if (val === '__add_connection__') {
+    // Reset selection to current remote value in select box
+    populateRemoteSelectors();
+    openWizardModal();
+    return;
+  }
+  onRemoteChange(paneId, val);
 }
 
 async function loadPane(paneId) {
@@ -459,6 +476,216 @@ function confirmRemoteChange() {
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) modal.classList.add('hidden');
+}
+
+// Connection Wizard Logic
+function initWizard() {
+  const typeSelect = document.getElementById('wizard-type');
+  if (typeSelect) {
+    onWizardTypeChange(typeSelect.value);
+  }
+}
+
+function openWizardModal() {
+  const modal = document.getElementById('wizard-modal');
+  if (!modal) return;
+
+  const nameInput = document.getElementById('wizard-name');
+  if (nameInput) nameInput.value = '';
+
+  const typeSelect = document.getElementById('wizard-type');
+  if (typeSelect) {
+    typeSelect.value = 'ftp';
+    onWizardTypeChange('ftp');
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function onWizardTypeChange(type) {
+  const container = document.getElementById('wizard-dynamic-fields');
+  if (!container) return;
+
+  let fieldsHtml = '';
+
+  switch (type) {
+    case 'ftp':
+      fieldsHtml = `
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label for="param-host">Host / Server</label>
+            <input type="text" id="param-host" class="modal-input" placeholder="e.g. ftp.example.com" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-port">Port</label>
+            <input type="text" id="param-port" class="modal-input" placeholder="21" value="21">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-user">Username</label>
+            <input type="text" id="param-user" class="modal-input" placeholder="Username">
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-pass">Password</label>
+            <input type="password" id="param-pass" class="modal-input" placeholder="Password">
+          </div>
+        </div>
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="param-tls"> Enable Explicit TLS / Explicit FTP over TLS
+          </label>
+        </div>
+      `;
+      break;
+
+    case 'sftp':
+      fieldsHtml = `
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label for="param-host">Host / Server</label>
+            <input type="text" id="param-host" class="modal-input" placeholder="e.g. sftp.example.com or IP" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-port">Port</label>
+            <input type="text" id="param-port" class="modal-input" placeholder="22" value="22">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-user">Username</label>
+            <input type="text" id="param-user" class="modal-input" placeholder="Username" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-pass">Password</label>
+            <input type="password" id="param-pass" class="modal-input" placeholder="Password (or leave blank for SSH key)">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="param-key_file">SSH Key Path (Optional)</label>
+          <input type="text" id="param-key_file" class="modal-input" placeholder="e.g. ~/.ssh/id_rsa">
+        </div>
+      `;
+      break;
+
+    case 'webdav':
+      fieldsHtml = `
+        <div class="form-group">
+          <label for="param-url">WebDAV Server URL</label>
+          <input type="url" id="param-url" class="modal-input" placeholder="https://nextcloud.example.com/remote.php/dav/files/user/" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-user">Username</label>
+            <input type="text" id="param-user" class="modal-input" placeholder="Username">
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-pass">Password / App Token</label>
+            <input type="password" id="param-pass" class="modal-input" placeholder="Password or token">
+          </div>
+        </div>
+      `;
+      break;
+
+    case 's3':
+      fieldsHtml = `
+        <div class="form-group">
+          <label for="param-endpoint">Endpoint (Optional for AWS S3, Required for MinIO)</label>
+          <input type="text" id="param-endpoint" class="modal-input" placeholder="e.g. https://s3.amazonaws.com or http://minio:9000">
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-access_key_id">Access Key ID</label>
+            <input type="text" id="param-access_key_id" class="modal-input" placeholder="Access Key" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-secret_access_key">Secret Access Key</label>
+            <input type="password" id="param-secret_access_key" class="modal-input" placeholder="Secret Key" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-region">Region</label>
+            <input type="text" id="param-region" class="modal-input" placeholder="e.g. us-east-1">
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-provider">Provider</label>
+            <select id="param-provider" class="modal-select">
+              <option value="AWS">Amazon AWS S3</option>
+              <option value="Minio">MinIO</option>
+              <option value="Other">Other S3 Compatible</option>
+            </select>
+          </div>
+        </div>
+      `;
+      break;
+
+    default:
+      fieldsHtml = '';
+  }
+
+  container.innerHTML = fieldsHtml;
+}
+
+async function handleWizardSubmit(event) {
+  event.preventDefault();
+
+  const nameInput = document.getElementById('wizard-name');
+  const typeSelect = document.getElementById('wizard-type');
+
+  const name = nameInput ? nameInput.value.trim() : '';
+  const type = typeSelect ? typeSelect.value : '';
+
+  if (!name || !type) {
+    showToast('Name and storage type are required', 'error');
+    return;
+  }
+
+  const parameters = {};
+
+  // Gather parameters from dynamic input elements
+  const container = document.getElementById('wizard-dynamic-fields');
+  if (container) {
+    const inputs = container.querySelectorAll('input, select');
+    inputs.forEach(input => {
+      const fieldName = input.id.replace('param-', '');
+      if (input.type === 'checkbox') {
+        parameters[fieldName] = input.checked ? 'true' : 'false';
+      } else {
+        const val = input.value.trim();
+        if (val !== '') {
+          parameters[fieldName] = val;
+        }
+      }
+    });
+  }
+
+  try {
+    showToast('Creating connection...', 'info');
+    await apiCall('api/remotes/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        type: type,
+        parameters: parameters
+      })
+    });
+
+    closeModal('wizard-modal');
+    showToast(`Connection "${name}" created successfully!`, 'success');
+
+    // Refresh remote lists
+    await loadRemotes();
+
+    // Format target remote name with trailing colon if needed
+    const createdRemote = name.endsWith(':') ? name : `${name}:`;
+
+    // Immediately navigate active pane to new remote
+    onRemoteChange(state.activePane, createdRemote);
+  } catch (err) {
+    showToast(`Failed to add connection: ${err.message}`, 'error');
+  }
 }
 
 // Helpers
