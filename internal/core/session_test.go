@@ -25,6 +25,10 @@ func (m *mockStorageEngine) Copy(ctx context.Context, src, dst string) error {
 	return nil
 }
 
+func (m *mockStorageEngine) Move(ctx context.Context, src, dst string) error {
+	return nil
+}
+
 func (m *mockStorageEngine) Delete(ctx context.Context, path string) error {
 	return nil
 }

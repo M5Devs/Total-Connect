@@ -50,6 +50,31 @@ func TestPaneCursorMovement(t *testing.T) {
 	}
 }
 
+func TestTotalCommanderDirectorySorting(t *testing.T) {
+	pane := NewPaneModel("test", "/some/dir")
+
+	rawItems := []models.FileItem{
+		{Name: "zebra.txt", IsDir: false},
+		{Name: "BetaDir", IsDir: true},
+		{Name: "apple.txt", IsDir: false},
+		{Name: "AlphaDir", IsDir: true},
+		{Name: "Banana.txt", IsDir: false},
+	}
+
+	pane.SetItems(rawItems)
+
+	if len(pane.Items) != 6 {
+		t.Fatalf("expected 6 items, got %d", len(pane.Items))
+	}
+
+	expectedNames := []string{"..", "AlphaDir", "BetaDir", "apple.txt", "Banana.txt", "zebra.txt"}
+	for i, name := range expectedNames {
+		if pane.Items[i].Name != name {
+			t.Errorf("at index %d: expected %q, got %q", i, name, pane.Items[i].Name)
+		}
+	}
+}
+
 func TestGetParentPathAndJoinPath(t *testing.T) {
 	tests := []struct {
 		current  string

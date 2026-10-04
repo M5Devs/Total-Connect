@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/M5Devs/Total-Connect/internal/models"
@@ -37,7 +38,39 @@ func NewPaneModel(id string, initialPath string) PaneModel {
 }
 
 func (p *PaneModel) SetItems(items []models.FileItem) {
-	// Prepend ".." if path is not root / empty and ".." is not already present
+	var dirs []models.FileItem
+	var files []models.FileItem
+
+	for _, item := range items {
+		if item.Name == ".." {
+			continue
+		}
+		if item.IsDir {
+			dirs = append(dirs, item)
+		} else {
+			files = append(files, item)
+		}
+	}
+
+	// Total Commander sorting: directories A-Z case-insensitive, followed by files A-Z case-insensitive
+	sort.SliceStable(dirs, func(i, j int) bool {
+		ni := strings.ToLower(dirs[i].Name)
+		nj := strings.ToLower(dirs[j].Name)
+		if ni == nj {
+			return dirs[i].Name < dirs[j].Name
+		}
+		return ni < nj
+	})
+
+	sort.SliceStable(files, func(i, j int) bool {
+		ni := strings.ToLower(files[i].Name)
+		nj := strings.ToLower(files[j].Name)
+		if ni == nj {
+			return files[i].Name < files[j].Name
+		}
+		return ni < nj
+	})
+
 	var list []models.FileItem
 	if canNavigateUp(p.Path) {
 		list = append(list, models.FileItem{
@@ -45,7 +78,9 @@ func (p *PaneModel) SetItems(items []models.FileItem) {
 			IsDir: true,
 		})
 	}
-	list = append(list, items...)
+
+	list = append(list, dirs...)
+	list = append(list, files...)
 	p.Items = list
 
 	if p.Cursor >= len(p.Items) {
