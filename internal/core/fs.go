@@ -32,6 +32,9 @@ type StorageEngine interface {
 	// CreateRemote creates or updates a remote configuration.
 	CreateRemote(ctx context.Context, name string, remoteType string, params map[string]string) error
 
+	// GetRemoteConfig gets the remote's backend type and parameter map.
+	GetRemoteConfig(ctx context.Context, name string) (string, map[string]string, error)
+
 	// DeleteRemote removes a remote configuration.
 	DeleteRemote(ctx context.Context, name string) error
 

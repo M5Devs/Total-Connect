@@ -3,6 +3,8 @@
 const state = {
   activePane: 'left',
   remotes: [],
+  isEditingRemote: false,
+  editingRemoteName: '',
   panes: {
     left: {
       remote: 'local',
@@ -68,7 +70,6 @@ async function loadRemotes() {
 function populateRemoteSelectors() {
   const leftSelect = document.getElementById('remote-select-left');
   const rightSelect = document.getElementById('remote-select-right');
-  const modalSelect = document.getElementById('modal-remote-select');
 
   const optionsHTML = ['<option value="local">Local Filesystem</option>']
     .concat(state.remotes.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`))
@@ -78,19 +79,92 @@ function populateRemoteSelectors() {
   if (leftSelect) leftSelect.innerHTML = optionsHTML;
   if (rightSelect) rightSelect.innerHTML = optionsHTML;
 
-  const modalOptionsHTML = ['<option value="local">Local Filesystem</option>']
-    .concat(state.remotes.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`))
-    .join('');
-
-  if (modalSelect) modalSelect.innerHTML = modalOptionsHTML;
-
   if (leftSelect) leftSelect.value = state.panes.left.remote;
   if (rightSelect) rightSelect.value = state.panes.right.remote;
+
+  renderRemoteModalList();
+}
+
+function renderRemoteModalList() {
+  const container = document.getElementById('remote-list-modal-body');
+  if (!container) return;
+
+  let html = `
+    <div class="remote-item-row" style="display:flex; align-items:center; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.1);">
+      <span style="font-weight:bold; cursor:pointer;" onclick="selectRemoteFromModal('local')">📁 Local Filesystem</span>
+      <button class="action-btn primary" style="padding:4px 8px; font-size:0.8rem;" onclick="selectRemoteFromModal('local')">Select</button>
+    </div>
+  `;
+
+  if (state.remotes.length === 0) {
+    html += `<div style="padding:12px; color: var(--text-muted); text-align:center;">No cloud remotes configured yet.</div>`;
+  } else {
+    state.remotes.forEach(remote => {
+      const cleanName = remote.endsWith(':') ? remote.slice(0, -1) : remote;
+      html += `
+        <div class="remote-item-row" style="display:flex; align-items:center; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.1);">
+          <span style="font-weight:bold; cursor:pointer;" onclick="selectRemoteFromModal('${escapeJs(remote)}')">☁️ ${escapeHtml(cleanName)}</span>
+          <div style="display:flex; gap:6px;">
+            <button class="action-btn primary" style="padding:4px 8px; font-size:0.8rem;" onclick="selectRemoteFromModal('${escapeJs(remote)}')">Select</button>
+            <button class="action-btn secondary" style="padding:4px 8px; font-size:0.8rem;" onclick="editRemote('${escapeJs(cleanName)}')">✏️ Edit</button>
+            <button class="action-btn danger" style="padding:4px 8px; font-size:0.8rem;" onclick="deleteRemote('${escapeJs(cleanName)}')">🗑️ Delete</button>
+          </div>
+        </div>
+      `;
+    });
+  }
+
+  container.innerHTML = html;
+}
+
+function selectRemoteFromModal(remoteVal) {
+  onRemoteChange(state.activePane, remoteVal);
+  closeModal('remote-modal');
+}
+
+async function deleteRemote(remoteName) {
+  const cleanName = remoteName.endsWith(':') ? remoteName.slice(0, -1) : remoteName;
+  if (!confirm(`Are you sure you want to delete remote [${cleanName}]?`)) {
+    return;
+  }
+
+  try {
+    await apiCall('api/remotes/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cleanName })
+    });
+
+    showToast(`Remote [${cleanName}] deleted`, 'success');
+
+    // Reset panes using this remote back to Local Filesystem
+    ['left', 'right'].forEach(paneId => {
+      const current = state.panes[paneId].remote;
+      const currentClean = current.endsWith(':') ? current.slice(0, -1) : current;
+      if (currentClean === cleanName) {
+        onRemoteChange(paneId, 'local');
+      }
+    });
+
+    await loadRemotes();
+  } catch (err) {
+    showToast(`Failed to delete remote: ${err.message}`, 'error');
+  }
+}
+
+async function editRemote(remoteName) {
+  const cleanName = remoteName.endsWith(':') ? remoteName.slice(0, -1) : remoteName;
+  try {
+    const data = await apiCall(`api/remotes/config?name=${encodeURIComponent(cleanName)}`);
+    closeModal('remote-modal');
+    openWizardModalForEdit(cleanName, data.type, data.parameters || {});
+  } catch (err) {
+    showToast(`Failed to fetch config for ${cleanName}: ${err.message}`, 'error');
+  }
 }
 
 function onRemoteSelectChange(paneId, val) {
   if (val === '__add_connection__') {
-    // Reset selection to current remote value in select box
     populateRemoteSelectors();
     openWizardModal();
     return;
@@ -110,7 +184,6 @@ async function loadPane(paneId) {
 
   try {
     const items = await apiCall(`api/entries?${query.toString()}`);
-    // Sort items: folders first (alphabetical), then files (alphabetical)
     pane.items = sortEntries(items || []);
     renderPaneList(paneId);
   } catch (err) {
@@ -145,7 +218,6 @@ function renderPaneList(paneId) {
 
   let html = '';
 
-  // Can navigate up?
   if (canNavigateUp(pane.path)) {
     html += `
       <div class="file-row" onclick="onRowClick('${paneId}', '..', true, event)">
@@ -215,7 +287,6 @@ function updateUI() {
     }
   }
 
-  // Mobile visibility
   if (leftPane && rightPane) {
     if (state.activePane === 'left') {
       leftPane.classList.add('mobile-visible');
@@ -465,14 +536,6 @@ function openChangeRemoteModal() {
   document.getElementById('remote-modal').classList.remove('hidden');
 }
 
-function confirmRemoteChange() {
-  const select = document.getElementById('modal-remote-select');
-  if (select) {
-    onRemoteChange(state.activePane, select.value);
-  }
-  closeModal('remote-modal');
-}
-
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) modal.classList.add('hidden');
@@ -487,22 +550,67 @@ function initWizard() {
 }
 
 function openWizardModal() {
+  state.isEditingRemote = false;
+  state.editingRemoteName = '';
+
   const modal = document.getElementById('wizard-modal');
   if (!modal) return;
 
+  const title = document.getElementById('wizard-title');
+  if (title) title.innerText = '⚡ Add New Connection';
+
+  const submitBtn = document.getElementById('wizard-submit-btn');
+  if (submitBtn) submitBtn.innerText = 'Save & Connect';
+
   const nameInput = document.getElementById('wizard-name');
-  if (nameInput) nameInput.value = '';
+  if (nameInput) {
+    nameInput.value = '';
+    nameInput.disabled = false;
+  }
 
   const typeSelect = document.getElementById('wizard-type');
   if (typeSelect) {
     typeSelect.value = 'ftp';
+    typeSelect.disabled = false;
     onWizardTypeChange('ftp');
   }
 
   modal.classList.remove('hidden');
 }
 
-function onWizardTypeChange(type) {
+function openWizardModalForEdit(remoteName, remoteType, params) {
+  state.isEditingRemote = true;
+  state.editingRemoteName = remoteName;
+
+  const modal = document.getElementById('wizard-modal');
+  if (!modal) return;
+
+  const title = document.getElementById('wizard-title');
+  if (title) title.innerText = `✏️ Edit Connection [${remoteName}]`;
+
+  const submitBtn = document.getElementById('wizard-submit-btn');
+  if (submitBtn) submitBtn.innerText = 'Update Connection';
+
+  const nameInput = document.getElementById('wizard-name');
+  if (nameInput) {
+    nameInput.value = remoteName;
+    nameInput.disabled = true;
+  }
+
+  const knownTypes = ['ftp', 'sftp', 'webdav', 's3', 'b2', 'drive', 'mega', 'dropbox', 'onedrive'];
+  const targetType = knownTypes.includes(remoteType) ? remoteType : 'custom';
+
+  const typeSelect = document.getElementById('wizard-type');
+  if (typeSelect) {
+    typeSelect.value = targetType;
+    typeSelect.disabled = true;
+    onWizardTypeChange(targetType, params, remoteType);
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function onWizardTypeChange(type, initialParams = {}, actualType = '') {
   const container = document.getElementById('wizard-dynamic-fields');
   if (!container) return;
 
@@ -514,26 +622,26 @@ function onWizardTypeChange(type) {
         <div class="form-row">
           <div class="form-group flex-2">
             <label for="param-host">Host / Server</label>
-            <input type="text" id="param-host" class="modal-input" placeholder="e.g. ftp.example.com" required>
+            <input type="text" id="param-host" class="modal-input" placeholder="e.g. ftp.example.com" value="${escapeHtml(initialParams.host || '')}" required>
           </div>
           <div class="form-group flex-1">
             <label for="param-port">Port</label>
-            <input type="text" id="param-port" class="modal-input" placeholder="21" value="21">
+            <input type="text" id="param-port" class="modal-input" placeholder="21" value="${escapeHtml(initialParams.port || '21')}">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="param-user">Username</label>
-            <input type="text" id="param-user" class="modal-input" placeholder="Username">
+            <input type="text" id="param-user" class="modal-input" placeholder="Username" value="${escapeHtml(initialParams.user || '')}">
           </div>
           <div class="form-group flex-1">
             <label for="param-pass">Password</label>
-            <input type="password" id="param-pass" class="modal-input" placeholder="Password">
+            <input type="password" id="param-pass" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Password'}" value="">
           </div>
         </div>
         <div class="form-group checkbox-group">
           <label class="checkbox-label">
-            <input type="checkbox" id="param-tls"> Enable Explicit TLS / Explicit FTP over TLS
+            <input type="checkbox" id="param-tls" ${initialParams.tls === 'true' ? 'checked' : ''}> Enable Explicit TLS / Explicit FTP over TLS
           </label>
         </div>
       `;
@@ -544,26 +652,31 @@ function onWizardTypeChange(type) {
         <div class="form-row">
           <div class="form-group flex-2">
             <label for="param-host">Host / Server</label>
-            <input type="text" id="param-host" class="modal-input" placeholder="e.g. sftp.example.com or IP" required>
+            <input type="text" id="param-host" class="modal-input" placeholder="e.g. sftp.example.com or IP" value="${escapeHtml(initialParams.host || '')}" required>
           </div>
           <div class="form-group flex-1">
             <label for="param-port">Port</label>
-            <input type="text" id="param-port" class="modal-input" placeholder="22" value="22">
+            <input type="text" id="param-port" class="modal-input" placeholder="22" value="${escapeHtml(initialParams.port || '22')}">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="param-user">Username</label>
-            <input type="text" id="param-user" class="modal-input" placeholder="Username" required>
+            <input type="text" id="param-user" class="modal-input" placeholder="Username" value="${escapeHtml(initialParams.user || '')}" required>
           </div>
           <div class="form-group flex-1">
             <label for="param-pass">Password</label>
-            <input type="password" id="param-pass" class="modal-input" placeholder="Password (or leave blank for SSH key)">
+            <input type="password" id="param-pass" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Password (or leave blank for SSH key)'}" value="">
           </div>
         </div>
         <div class="form-group">
           <label for="param-key_file">SSH Key Path (Optional)</label>
-          <input type="text" id="param-key_file" class="modal-input" placeholder="e.g. ~/.ssh/id_rsa">
+          <input type="text" id="param-key_file" class="modal-input" placeholder="e.g. ~/.ssh/id_rsa" value="${escapeHtml(initialParams.key_file || '')}">
+        </div>
+        <div class="form-group checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="param-key_use_agent" ${initialParams.key_use_agent === 'true' ? 'checked' : ''}> Use SSH Agent (Requires local ssh-agent socket)
+          </label>
         </div>
       `;
       break;
@@ -572,16 +685,16 @@ function onWizardTypeChange(type) {
       fieldsHtml = `
         <div class="form-group">
           <label for="param-url">WebDAV Server URL</label>
-          <input type="url" id="param-url" class="modal-input" placeholder="https://nextcloud.example.com/remote.php/dav/files/user/" required>
+          <input type="url" id="param-url" class="modal-input" placeholder="https://nextcloud.example.com/remote.php/dav/files/user/" value="${escapeHtml(initialParams.url || '')}" required>
         </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="param-user">Username</label>
-            <input type="text" id="param-user" class="modal-input" placeholder="Username">
+            <input type="text" id="param-user" class="modal-input" placeholder="Username" value="${escapeHtml(initialParams.user || '')}">
           </div>
           <div class="form-group flex-1">
             <label for="param-pass">Password / App Token</label>
-            <input type="password" id="param-pass" class="modal-input" placeholder="Password or token">
+            <input type="password" id="param-pass" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Password or token'}" value="">
           </div>
         </div>
       `;
@@ -590,32 +703,148 @@ function onWizardTypeChange(type) {
     case 's3':
       fieldsHtml = `
         <div class="form-group">
-          <label for="param-endpoint">Endpoint (Optional for AWS S3, Required for MinIO)</label>
-          <input type="text" id="param-endpoint" class="modal-input" placeholder="e.g. https://s3.amazonaws.com or http://minio:9000">
+          <label for="param-endpoint">Endpoint (Optional for AWS S3, Required for MinIO / Cloudflare R2)</label>
+          <input type="text" id="param-endpoint" class="modal-input" placeholder="e.g. https://<account_id>.r2.cloudflarestorage.com or http://minio:9000" value="${escapeHtml(initialParams.endpoint || '')}">
         </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="param-access_key_id">Access Key ID</label>
-            <input type="text" id="param-access_key_id" class="modal-input" placeholder="Access Key" required>
+            <input type="text" id="param-access_key_id" class="modal-input" placeholder="Access Key" value="${escapeHtml(initialParams.access_key_id || '')}" required>
           </div>
           <div class="form-group flex-1">
             <label for="param-secret_access_key">Secret Access Key</label>
-            <input type="password" id="param-secret_access_key" class="modal-input" placeholder="Secret Key" required>
+            <input type="password" id="param-secret_access_key" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Secret Key'}" value="">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group flex-1">
             <label for="param-region">Region</label>
-            <input type="text" id="param-region" class="modal-input" placeholder="e.g. us-east-1">
+            <input type="text" id="param-region" class="modal-input" placeholder="e.g. us-east-1 or auto" value="${escapeHtml(initialParams.region || '')}">
           </div>
           <div class="form-group flex-1">
             <label for="param-provider">Provider</label>
             <select id="param-provider" class="modal-select">
-              <option value="AWS">Amazon AWS S3</option>
-              <option value="Minio">MinIO</option>
-              <option value="Other">Other S3 Compatible</option>
+              <option value="AWS" ${initialParams.provider === 'AWS' ? 'selected' : ''}>Amazon AWS S3</option>
+              <option value="Cloudflare" ${initialParams.provider === 'Cloudflare' ? 'selected' : ''}>Cloudflare R2</option>
+              <option value="Minio" ${initialParams.provider === 'Minio' ? 'selected' : ''}>MinIO</option>
+              <option value="Other" ${initialParams.provider === 'Other' ? 'selected' : ''}>Other S3 Compatible</option>
             </select>
           </div>
+        </div>
+      `;
+      break;
+
+    case 'b2':
+      fieldsHtml = `
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-account">Application Key ID / Account</label>
+            <input type="text" id="param-account" class="modal-input" placeholder="Key ID" value="${escapeHtml(initialParams.account || '')}" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-key">Application Key</label>
+            <input type="password" id="param-key" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Application Key'}" value="">
+          </div>
+        </div>
+      `;
+      break;
+
+    case 'drive':
+      fieldsHtml = `
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-client_id">Client ID (Optional)</label>
+            <input type="text" id="param-client_id" class="modal-input" placeholder="OAuth Client ID" value="${escapeHtml(initialParams.client_id || '')}">
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-client_secret">Client Secret (Optional)</label>
+            <input type="password" id="param-client_secret" class="modal-input" placeholder="OAuth Client Secret" value="">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="param-scope">Scope (Optional)</label>
+          <input type="text" id="param-scope" class="modal-input" placeholder="e.g. drive or drive.file" value="${escapeHtml(initialParams.scope || '')}">
+        </div>
+        <div class="form-group">
+          <label for="param-root_folder_id">Root Folder ID (Optional)</label>
+          <input type="text" id="param-root_folder_id" class="modal-input" placeholder="Google Drive Root Folder ID" value="${escapeHtml(initialParams.root_folder_id || '')}">
+        </div>
+      `;
+      break;
+
+    case 'mega':
+      fieldsHtml = `
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-user">MEGA Email / User</label>
+            <input type="email" id="param-user" class="modal-input" placeholder="user@example.com" value="${escapeHtml(initialParams.user || '')}" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-pass">MEGA Password</label>
+            <input type="password" id="param-pass" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Password'}" value="">
+          </div>
+        </div>
+      `;
+      break;
+
+    case 'dropbox':
+      fieldsHtml = `
+        <div class="form-group">
+          <label for="param-token">Access Token / Token (Required unless App Key provided)</label>
+          <input type="password" id="param-token" class="modal-input" placeholder="${state.isEditingRemote ? '(Unchanged unless entered)' : 'Dropbox Token'}" value="">
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-app_key">App Key (Optional)</label>
+            <input type="text" id="param-app_key" class="modal-input" placeholder="App Key" value="${escapeHtml(initialParams.app_key || '')}">
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-app_secret">App Secret (Optional)</label>
+            <input type="password" id="param-app_secret" class="modal-input" placeholder="App Secret" value="">
+          </div>
+        </div>
+      `;
+      break;
+
+    case 'onedrive':
+      fieldsHtml = `
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="param-client_id">Client ID (Optional)</label>
+            <input type="text" id="param-client_id" class="modal-input" placeholder="Client ID" value="${escapeHtml(initialParams.client_id || '')}">
+          </div>
+          <div class="form-group flex-1">
+            <label for="param-client_secret">Client Secret (Optional)</label>
+            <input type="password" id="param-client_secret" class="modal-input" placeholder="Client Secret" value="">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="param-drive_id">Drive ID (Optional)</label>
+          <input type="text" id="param-drive_id" class="modal-input" placeholder="Drive ID" value="${escapeHtml(initialParams.drive_id || '')}">
+        </div>
+      `;
+      break;
+
+    case 'custom':
+      let rawConfigText = '';
+      if (state.isEditingRemote && actualType) {
+        rawConfigText = `type = ${actualType}\n`;
+        for (const [k, v] of Object.entries(initialParams)) {
+          rawConfigText += `${k} = ${v}\n`;
+        }
+      }
+
+      fieldsHtml = `
+        <div class="form-group">
+          <label for="param-custom_type">Storage Provider Type (rclone type)</label>
+          <input type="text" id="param-custom_type" class="modal-input" placeholder="e.g. drive, mega, pcloud, qstor, alias, etc." value="${escapeHtml(actualType || initialParams.type || '')}">
+        </div>
+        <div class="form-group">
+          <label for="raw-config-text">⚡ Raw Rclone Config / Key-Value Block</label>
+          <textarea id="raw-config-text" class="modal-input" style="height:120px; font-family:monospace; font-size:0.85rem;" placeholder="Paste config block or options, e.g.:&#10;[myremote]&#10;type = drive&#10;scope = drive.readonly&#10;&#10;OR simply key=value pairs:&#10;user = alice&#10;pass = secret">${escapeHtml(rawConfigText)}</textarea>
+          <p style="font-size:0.8rem; color: var(--text-muted); margin-top:4px;">
+            Supports pasting full standard <code>[remote]\ntype=...\n...</code> blocks OR key=value pairs for any of rclone's 50+ backends.
+          </p>
         </div>
       `;
       break;
@@ -633,35 +862,67 @@ async function handleWizardSubmit(event) {
   const nameInput = document.getElementById('wizard-name');
   const typeSelect = document.getElementById('wizard-type');
 
-  const name = nameInput ? nameInput.value.trim() : '';
-  const type = typeSelect ? typeSelect.value : '';
+  let name = nameInput ? nameInput.value.trim() : '';
+  let type = typeSelect ? typeSelect.value : '';
 
-  if (!name || !type) {
-    showToast('Name and storage type are required', 'error');
+  if (state.isEditingRemote) {
+    name = state.editingRemoteName;
+  }
+
+  if (!name) {
+    showToast('Connection name is required', 'error');
     return;
   }
 
-  const parameters = {};
+  let parameters = {};
 
-  // Gather parameters from dynamic input elements
-  const container = document.getElementById('wizard-dynamic-fields');
-  if (container) {
-    const inputs = container.querySelectorAll('input, select');
-    inputs.forEach(input => {
-      const fieldName = input.id.replace('param-', '');
-      if (input.type === 'checkbox') {
-        parameters[fieldName] = input.checked ? 'true' : 'false';
-      } else {
-        const val = input.value.trim();
-        if (val !== '') {
-          parameters[fieldName] = val;
+  if (type === 'custom') {
+    const customTypeInput = document.getElementById('param-custom_type');
+    const rawConfigTextArea = document.getElementById('raw-config-text');
+
+    const customTypeVal = customTypeInput ? customTypeInput.value.trim() : '';
+    const rawText = rawConfigTextArea ? rawConfigTextArea.value.trim() : '';
+
+    // Parse raw rclone config text
+    const parsed = parseRawRcloneConfig(rawText);
+
+    if (parsed.remoteName && !state.isEditingRemote && !name) {
+      name = parsed.remoteName;
+    }
+
+    if (parsed.type) {
+      type = parsed.type;
+    } else if (customTypeVal) {
+      type = customTypeVal;
+    }
+
+    parameters = parsed.parameters;
+  } else {
+    // Gather parameters from dynamic input elements
+    const container = document.getElementById('wizard-dynamic-fields');
+    if (container) {
+      const inputs = container.querySelectorAll('input, select');
+      inputs.forEach(input => {
+        const fieldName = input.id.replace('param-', '');
+        if (input.type === 'checkbox') {
+          parameters[fieldName] = input.checked ? 'true' : 'false';
+        } else {
+          const val = input.value.trim();
+          if (val !== '') {
+            parameters[fieldName] = val;
+          }
         }
-      }
-    });
+      });
+    }
+  }
+
+  if (!type) {
+    showToast('Storage type is required', 'error');
+    return;
   }
 
   try {
-    showToast('Creating connection...', 'info');
+    showToast(state.isEditingRemote ? 'Updating connection...' : 'Creating connection...', 'info');
     await apiCall('api/remotes/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -673,19 +934,53 @@ async function handleWizardSubmit(event) {
     });
 
     closeModal('wizard-modal');
-    showToast(`Connection "${name}" created successfully!`, 'success');
+    showToast(`Connection "${name}" ${state.isEditingRemote ? 'updated' : 'created'} successfully!`, 'success');
 
     // Refresh remote lists
     await loadRemotes();
 
-    // Format target remote name with trailing colon if needed
-    const createdRemote = name.endsWith(':') ? name : `${name}:`;
+    // Format target remote name with trailing colon
+    const targetRemote = name.endsWith(':') ? name : `${name}:`;
 
-    // Immediately navigate active pane to new remote
-    onRemoteChange(state.activePane, createdRemote);
+    // Immediately navigate active pane to remote
+    onRemoteChange(state.activePane, targetRemote);
   } catch (err) {
-    showToast(`Failed to add connection: ${err.message}`, 'error');
+    showToast(`Failed to save connection: ${err.message}`, 'error');
   }
+}
+
+function parseRawRcloneConfig(text) {
+  let remoteName = '';
+  let type = '';
+  const parameters = {};
+
+  if (!text) return { remoteName, type, parameters };
+
+  const lines = text.split('\n');
+  for (let line of lines) {
+    line = line.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+
+    // Check header [remote_name]
+    if (line.startsWith('[') && line.endsWith(']')) {
+      remoteName = line.slice(1, -1).trim();
+      continue;
+    }
+
+    const eqIdx = line.indexOf('=');
+    if (eqIdx !== -1) {
+      const key = line.slice(0, eqIdx).trim();
+      const val = line.slice(eqIdx + 1).trim();
+
+      if (key.toLowerCase() === 'type') {
+        type = val;
+      } else {
+        parameters[key] = val;
+      }
+    }
+  }
+
+  return { remoteName, type, parameters };
 }
 
 // Helpers

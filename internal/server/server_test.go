@@ -55,6 +55,18 @@ func (m *mockStorageEngine) CreateRemote(ctx context.Context, name string, remot
 	return nil
 }
 
+func (m *mockStorageEngine) GetRemoteConfig(ctx context.Context, name string) (string, map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clean := strings.TrimSuffix(name, ":")
+	for _, r := range m.remotes {
+		if strings.TrimSuffix(r, ":") == clean {
+			return "mock", map[string]string{"host": "example.com"}, nil
+		}
+	}
+	return "", nil, fmt.Errorf("remote not found")
+}
+
 func (m *mockStorageEngine) DeleteRemote(ctx context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -353,5 +365,35 @@ func TestServer_CopyMoveMkdirDelete(t *testing.T) {
 	res, err = http.Post(ts.URL+"/api/delete", "application/json", bytes.NewBuffer(delBody))
 	if err != nil || res.StatusCode != http.StatusOK {
 		t.Fatalf("delete failed: %v, status: %d", err, res.StatusCode)
+	}
+}
+
+func TestServer_GetRemoteConfig(t *testing.T) {
+	mockEng := newMockEngine()
+	srv := NewServer(mockEng)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	res, err := http.Get(ts.URL + "/api/remotes/config?name=drive:")
+	if err != nil {
+		t.Fatalf("failed GET /api/remotes/config: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+
+	var data struct {
+		Name       string            `json:"name"`
+		Type       string            `json:"type"`
+		Parameters map[string]string `json:"parameters"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if data.Name != "drive:" || data.Type != "mock" {
+		t.Errorf("unexpected response: %+v", data)
 	}
 }

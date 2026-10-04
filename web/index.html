@@ -115,7 +115,7 @@
         <span class="btn-icon-label">🔄</span> Refresh
       </button>
       <button class="action-btn secondary" onclick="openChangeRemoteModal()">
-        <span class="btn-icon-label">🌐</span> Remote
+        <span class="btn-icon-label">🌐</span> Manage Remotes
       </button>
     </footer>
 
@@ -135,40 +135,51 @@
       </div>
     </div>
 
+    <!-- Remote Management Modal (List, Select, Edit ✏️, Delete 🗑️) -->
     <div id="remote-modal" class="modal-backdrop hidden">
       <div class="modal-card">
-        <h3>Select Remote for Active Pane</h3>
-        <select id="modal-remote-select" class="modal-select"></select>
-        <div class="modal-actions">
+        <div class="wizard-header">
+          <h3>🌐 Configured Remotes</h3>
+          <button class="modal-close-btn" onclick="closeModal('remote-modal')" aria-label="Close">✕</button>
+        </div>
+        <div class="remote-list-container" id="remote-list-modal-body">
+          <!-- Rendered dynamically with Edit ✏️ and Delete 🗑️ buttons -->
+        </div>
+        <div class="modal-actions" style="margin-top: 15px;">
           <button class="action-btn info" onclick="closeModal('remote-modal'); openWizardModal();">➕ Add Connection</button>
-          <button class="action-btn primary" onclick="confirmRemoteChange()">Select</button>
-          <button class="action-btn secondary" onclick="closeModal('remote-modal')">Cancel</button>
+          <button class="action-btn secondary" onclick="closeModal('remote-modal')">Close</button>
         </div>
       </div>
     </div>
 
-    <!-- Interactive "+ Add Connection" Web Wizard Modal -->
+    <!-- Interactive "+ Add Connection" / "Edit Connection" Web Wizard Modal -->
     <div id="wizard-modal" class="modal-backdrop hidden">
       <div class="modal-card wizard-card">
         <div class="wizard-header">
-          <h3>⚡ Add New Connection</h3>
+          <h3 id="wizard-title">⚡ Add New Connection</h3>
           <button class="modal-close-btn" onclick="closeModal('wizard-modal')" aria-label="Close">✕</button>
         </div>
 
         <form id="wizard-form" onsubmit="handleWizardSubmit(event)">
-          <div class="form-group">
+          <div class="form-group" id="wizard-type-group">
             <label for="wizard-type">Storage Type</label>
             <select id="wizard-type" class="modal-select" onchange="onWizardTypeChange(this.value)">
               <option value="ftp">FTP (File Transfer Protocol)</option>
               <option value="sftp">SFTP / SSH (Secure File Transfer Protocol)</option>
               <option value="webdav">WebDAV / Nextcloud</option>
-              <option value="s3">Amazon S3 / MinIO / S3 Compatible</option>
+              <option value="s3">Amazon S3 / MinIO / Cloudflare R2</option>
+              <option value="b2">Backblaze B2</option>
+              <option value="drive">Google Drive</option>
+              <option value="mega">MEGA</option>
+              <option value="dropbox">Dropbox</option>
+              <option value="onedrive">Microsoft OneDrive</option>
+              <option value="custom">⚡ Custom / Raw Config Mode (Advanced)</option>
             </select>
           </div>
 
           <div class="form-group">
             <label for="wizard-name">Connection Name</label>
-            <input type="text" id="wizard-name" class="modal-input" placeholder="e.g. MySourceForge, My VPS, Nextcloud" required>
+            <input type="text" id="wizard-name" class="modal-input" placeholder="e.g. MyGoogleDrive, MySFTP, BackupB2" required>
           </div>
 
           <!-- Dynamic Parameter Fields -->
@@ -178,7 +189,7 @@
 
           <div class="modal-actions">
             <button type="button" class="action-btn secondary" onclick="closeModal('wizard-modal')">Cancel</button>
-            <button type="submit" class="action-btn primary">Save &amp; Connect</button>
+            <button type="submit" class="action-btn primary" id="wizard-submit-btn">Save &amp; Connect</button>
           </div>
         </form>
       </div>
