@@ -49,6 +49,8 @@ func (s *Server) routes() {
 
 	// API routes
 	s.mux.HandleFunc("GET /api/remotes", s.handleListRemotes)
+	s.mux.HandleFunc("POST /api/remotes/create", s.handleCreateRemote)
+	s.mux.HandleFunc("POST /api/remotes/delete", s.handleDeleteRemote)
 	s.mux.HandleFunc("GET /api/entries", s.handleListEntries)
 	s.mux.HandleFunc("POST /api/copy", s.handleCopy)
 	s.mux.HandleFunc("POST /api/move", s.handleMove)
@@ -76,6 +78,71 @@ func (s *Server) handleListRemotes(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusOK, map[string]interface{}{
 		"remotes": remotes,
 	})
+}
+
+type createRemoteRequest struct {
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Parameters map[string]string `json:"parameters"`
+}
+
+func (s *Server) handleCreateRemote(w http.ResponseWriter, r *http.Request) {
+	var req createRemoteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	req.Type = strings.TrimSpace(req.Type)
+
+	if req.Name == "" {
+		renderError(w, http.StatusBadRequest, "remote name is required")
+		return
+	}
+	if req.Type == "" {
+		renderError(w, http.StatusBadRequest, "remote type is required")
+		return
+	}
+
+	if req.Parameters == nil {
+		req.Parameters = make(map[string]string)
+	}
+
+	if err := s.engine.CreateRemote(r.Context(), req.Name, req.Type, req.Parameters); err != nil {
+		renderError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	renderJSON(w, http.StatusCreated, map[string]string{
+		"status": "ok",
+		"name":   req.Name,
+	})
+}
+
+type deleteRemoteRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *Server) handleDeleteRemote(w http.ResponseWriter, r *http.Request) {
+	var req deleteRemoteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		renderError(w, http.StatusBadRequest, "remote name is required")
+		return
+	}
+
+	if err := s.engine.DeleteRemote(r.Context(), req.Name); err != nil {
+		renderError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {

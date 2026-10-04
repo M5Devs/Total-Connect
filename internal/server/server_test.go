@@ -47,6 +47,28 @@ func (m *mockStorageEngine) ListRemotes(ctx context.Context) ([]string, error) {
 	return m.remotes, nil
 }
 
+func (m *mockStorageEngine) CreateRemote(ctx context.Context, name string, remoteType string, params map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clean := strings.TrimSuffix(name, ":")
+	m.remotes = append(m.remotes, clean+":")
+	return nil
+}
+
+func (m *mockStorageEngine) DeleteRemote(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clean := strings.TrimSuffix(name, ":")
+	var filtered []string
+	for _, r := range m.remotes {
+		if strings.TrimSuffix(r, ":") != clean {
+			filtered = append(filtered, r)
+		}
+	}
+	m.remotes = filtered
+	return nil
+}
+
 func (m *mockStorageEngine) ListEntries(ctx context.Context, remotePath string) ([]models.FileItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -183,6 +205,70 @@ func TestServer_ListRemotes(t *testing.T) {
 
 	if len(data.Remotes) != 2 || data.Remotes[0] != "drive:" || data.Remotes[1] != "s3:" {
 		t.Errorf("unexpected remotes output: %v", data.Remotes)
+	}
+}
+
+func TestServer_CreateAndDeleteRemote(t *testing.T) {
+	mockEng := newMockEngine()
+	srv := NewServer(mockEng)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// 1. Create Remote
+	createReq := map[string]interface{}{
+		"name": "MySourceForge",
+		"type": "ftp",
+		"parameters": map[string]string{
+			"host": "frs.sourceforge.net",
+			"user": "myuser",
+			"pass": "mypassword",
+			"port": "21",
+			"tls":  "false",
+		},
+	}
+	body, _ := json.Marshal(createReq)
+	res, err := http.Post(ts.URL+"/api/remotes/create", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		t.Fatalf("failed POST /api/remotes/create: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", res.StatusCode)
+	}
+
+	remotes, _ := mockEng.ListRemotes(context.Background())
+	found := false
+	for _, r := range remotes {
+		if strings.HasPrefix(r, "MySourceForge") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected MySourceForge remote in list, got %v", remotes)
+	}
+
+	// 2. Delete Remote
+	delReq := map[string]string{
+		"name": "MySourceForge",
+	}
+	bodyDel, _ := json.Marshal(delReq)
+	resDel, err := http.Post(ts.URL+"/api/remotes/delete", "application/json", bytes.NewBuffer(bodyDel))
+	if err != nil {
+		t.Fatalf("failed POST /api/remotes/delete: %v", err)
+	}
+	defer resDel.Body.Close()
+
+	if resDel.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resDel.StatusCode)
+	}
+
+	remotes, _ = mockEng.ListRemotes(context.Background())
+	for _, r := range remotes {
+		if strings.HasPrefix(r, "MySourceForge") {
+			t.Fatalf("expected MySourceForge remote to be deleted, still found in %v", remotes)
+		}
 	}
 }
 

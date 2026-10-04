@@ -6,8 +6,85 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rclone/rclone/fs/config"
+	"github.com/rclone/rclone/fs/config/obscure"
+
 	"github.com/M5Devs/Total-Connect/internal/models"
 )
+
+func TestRcloneEngineCreateAndDeleteRemote(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "rclone.conf")
+
+	engine, err := NewRcloneEngine(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to create RcloneEngine: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Test CreateRemote
+	params := map[string]string{
+		"host": "ftp.example.com",
+		"user": "testuser",
+		"pass": "secretpassword",
+		"port": "21",
+	}
+
+	err = engine.CreateRemote(ctx, "TestFTP", "ftp", params)
+	if err != nil {
+		t.Fatalf("CreateRemote failed: %v", err)
+	}
+
+	remotes, err := engine.ListRemotes(ctx)
+	if err != nil {
+		t.Fatalf("ListRemotes failed: %v", err)
+	}
+
+	found := false
+	for _, r := range remotes {
+		if r == "TestFTP" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected TestFTP in remotes list %v", remotes)
+	}
+
+	// Verify obfuscated password stored in config
+	storedPass := config.FileGet("TestFTP", "pass")
+	if storedPass == "secretpassword" {
+		t.Errorf("expected password to be obscured in config, got plain text")
+	}
+
+	deobsPass, err := obscure.Reveal(storedPass)
+	if err != nil || deobsPass != "secretpassword" {
+		t.Errorf("expected revealed password to match 'secretpassword', got %q, err: %v", deobsPass, err)
+	}
+
+	// Verify file was written to disk
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		t.Errorf("expected config file to exist at %s", cfgPath)
+	}
+
+	// Test DeleteRemote
+	err = engine.DeleteRemote(ctx, "TestFTP")
+	if err != nil {
+		t.Fatalf("DeleteRemote failed: %v", err)
+	}
+
+	remotes, err = engine.ListRemotes(ctx)
+	if err != nil {
+		t.Fatalf("ListRemotes failed: %v", err)
+	}
+
+	for _, r := range remotes {
+		if r == "TestFTP" {
+			t.Errorf("expected TestFTP to be deleted, still found in %v", remotes)
+		}
+	}
+}
 
 func TestRcloneEngineLocalOps(t *testing.T) {
 	tmpDir := t.TempDir()
