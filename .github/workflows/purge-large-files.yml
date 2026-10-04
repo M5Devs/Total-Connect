@@ -1,0 +1,30 @@
+name: Purge Large Files from History
+
+on:
+  workflow_dispatch: # ده بيخليك تشغله يدوي بضغطة زرار
+
+permissions:
+  contents: write # صلاحية عشان يقدر يعمل Force Push
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # مهم جداً عشان يسحب كل الهيستوري القديم
+
+      - name: Install git-filter-repo
+        run: pip install git-filter-repo
+
+      - name: Purge binary from git history
+        run: |
+          git filter-repo --invert-paths --path tc-server --force
+
+      - name: Push cleaned history
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git remote add origin-clean "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push origin-clean --force --all
