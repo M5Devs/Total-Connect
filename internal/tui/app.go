@@ -19,6 +19,7 @@ const (
 	ModalRemotePicker
 	ModalMkdir
 	ModalConfirmDelete
+	ModalHelp
 )
 
 // Messages for async operations
@@ -38,6 +39,8 @@ type RemotesLoadedMsg struct {
 	Remotes []string
 	Err     error
 }
+
+type ProgressMsg models.Progress
 
 type AppModel struct {
 	engine core.StorageEngine
@@ -65,8 +68,9 @@ func NewAppModel(engine core.StorageEngine) AppModel {
 	s.Spinner = spinner.Dot
 
 	ti := textinput.New()
-	ti.Placeholder = "New folder name"
-	ti.CharLimit = 64
+	ti.Placeholder = "New directory name..."
+	ti.CharLimit = 156
+	ti.Width = 30
 
 	left := NewPaneModel("left", ".")
 	left.IsActive = true
@@ -110,6 +114,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Spinner, cmd = m.Spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
+	case ProgressMsg:
+		p := models.Progress(msg)
+		m.StatusBar.SetProgress(&p)
+
 	case EntriesLoadedMsg:
 		if msg.PaneID == "left" {
 			m.LeftPane.IsLoading = false
@@ -138,6 +146,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case OperationCompleteMsg:
+		m.StatusBar.ClearProgress()
 		if msg.Err != nil {
 			m.StatusBar.SetMessage(fmt.Sprintf("%s failed: %v", msg.Op, msg.Err), true)
 		} else {
@@ -161,6 +170,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		case "?":
+			m.ActiveModal = ModalHelp
 
 		case "tab":
 			if m.ActiveID == "left" {
@@ -258,6 +270,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m AppModel) handleModalKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.ActiveModal {
+	case ModalHelp:
+		switch msg.String() {
+		case "esc", "q", "?", "enter":
+			m.ActiveModal = ModalNone
+		}
+
 	case ModalRemotePicker:
 		switch msg.String() {
 		case "esc", "q":
@@ -369,6 +387,28 @@ func (m AppModel) View() string {
 	if m.ActiveModal != ModalNone {
 		var modalContent string
 		switch m.ActiveModal {
+		case ModalHelp:
+			body := lipgloss.JoinVertical(lipgloss.Left,
+				m.styles.ModalTitle.Render("Total Connect - Keyboard Shortcuts"),
+				"",
+				"  Tab         Switch active pane",
+				"  Up/Down/j/k Move cursor up/down",
+				"  PgUp/PgDown Page up/down",
+				"  Enter       Open directory / Enter",
+				"  Backspace   Navigate to parent directory",
+				"  F5 / c      Copy selected item to opposite pane",
+				"  F6 / m      Move selected item to opposite pane",
+				"  F7 / n      Create new directory (Mkdir)",
+				"  F8 / d      Delete selected item",
+				"  r           Open Storage Remote Picker",
+				"  Ctrl+R      Refresh current pane",
+				"  ?           Toggle Help cheat sheet",
+				"  q / Ctrl+C  Quit application",
+				"",
+				m.styles.StatusText.Render("[Esc / q / ? / Enter] Close Help"),
+			)
+			box := m.styles.ModalBox.Render(body)
+			modalContent = centerOverlay(box, m.Width, m.Height)
 		case ModalRemotePicker:
 			modalContent = m.RemotePicker.View(m.styles, m.Width, m.Height)
 		case ModalMkdir:
@@ -426,28 +466,37 @@ func (m AppModel) fetchRemotesCmd() tea.Cmd {
 }
 
 func (m AppModel) copyCmd(src, dst string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
+	ch := make(chan tea.Msg, 10)
+	go func() {
+		defer close(ch)
+		progressHandler := func(p models.Progress) {
+			ch <- ProgressMsg(p)
+		}
+		ctx := core.WithProgressHandler(context.Background(), progressHandler)
 		err := m.engine.Copy(ctx, src, dst)
-		return OperationCompleteMsg{
+		ch <- OperationCompleteMsg{
 			Op:  fmt.Sprintf("Copy (%s -> %s)", src, dst),
 			Err: err,
 		}
-	}
+	}()
+	return waitForProgress(ch)
 }
 
 func (m AppModel) moveCmd(src, dst string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		err := m.engine.Copy(ctx, src, dst)
-		if err == nil {
-			err = m.engine.Delete(ctx, src)
+	ch := make(chan tea.Msg, 10)
+	go func() {
+		defer close(ch)
+		progressHandler := func(p models.Progress) {
+			ch <- ProgressMsg(p)
 		}
-		return OperationCompleteMsg{
+		ctx := core.WithProgressHandler(context.Background(), progressHandler)
+		err := m.engine.Move(ctx, src, dst)
+		ch <- OperationCompleteMsg{
 			Op:  fmt.Sprintf("Move (%s -> %s)", src, dst),
 			Err: err,
 		}
-	}
+	}()
+	return waitForProgress(ch)
 }
 
 func (m AppModel) mkdirCmd(path string) tea.Cmd {
@@ -469,5 +518,15 @@ func (m AppModel) deleteCmd(path string) tea.Cmd {
 			Op:  fmt.Sprintf("Delete (%s)", path),
 			Err: err,
 		}
+	}
+}
+
+func waitForProgress(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
 	}
 }

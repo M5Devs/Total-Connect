@@ -43,6 +43,10 @@ func (m *mockStorageEngine) Copy(ctx context.Context, src, dst string) error {
 	return nil
 }
 
+func (m *mockStorageEngine) Move(ctx context.Context, src, dst string) error {
+	return nil
+}
+
 func (m *mockStorageEngine) Delete(ctx context.Context, path string) error {
 	return nil
 }
@@ -148,5 +152,48 @@ func TestAppMkdirModalToggle(t *testing.T) {
 
 	if app.ActiveModal != ModalNone {
 		t.Errorf("expected ActiveModal ModalNone after Esc, got %v", app.ActiveModal)
+	}
+}
+
+func TestAppHelpModalToggle(t *testing.T) {
+	engine := newMockStorageEngine()
+	app := NewAppModel(engine)
+
+	// Press '?' to trigger Help modal
+	updatedModel, _ := app.Update(tea.KeyMsg{Runes: []rune{'?'}, Type: tea.KeyRunes})
+	app = updatedModel.(AppModel)
+
+	if app.ActiveModal != ModalHelp {
+		t.Errorf("expected ActiveModal ModalHelp, got %v", app.ActiveModal)
+	}
+
+	// Press Esc to close
+	updatedModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	app = updatedModel.(AppModel)
+
+	if app.ActiveModal != ModalNone {
+		t.Errorf("expected ActiveModal ModalNone after Esc, got %v", app.ActiveModal)
+	}
+}
+
+func TestAppProgressMsg(t *testing.T) {
+	engine := newMockStorageEngine()
+	app := NewAppModel(engine)
+
+	prog := ProgressMsg{
+		CurrentFile:      "test.txt",
+		BytesTransferred: 500,
+		TotalBytes:       1000,
+		Percentage:       50.0,
+	}
+
+	updatedModel, _ := app.Update(prog)
+	app = updatedModel.(AppModel)
+
+	if app.StatusBar.Progress == nil {
+		t.Fatal("expected status bar progress to be non-nil")
+	}
+	if app.StatusBar.Progress.CurrentFile != "test.txt" {
+		t.Errorf("expected current file test.txt, got %q", app.StatusBar.Progress.CurrentFile)
 	}
 }

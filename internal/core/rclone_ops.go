@@ -106,10 +106,31 @@ func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("failed to open dst fs %q: %w", dstFs, err)
 	}
 
-	_, err = fsrc.NewObject(ctx, srcRemote)
+	fn, hasProgress := GetProgressHandler(ctx)
+
+	obj, err := fsrc.NewObject(ctx, srcRemote)
 	if err == nil {
 		// Single file copy
-		return operations.CopyFile(ctx, fdst, fsrc, dstRemote, srcRemote)
+		totalBytes := obj.Size()
+		if hasProgress {
+			fn(models.Progress{
+				CurrentFile:      filepath.Base(src),
+				BytesTransferred: 0,
+				TotalBytes:       totalBytes,
+				Percentage:       0.0,
+			})
+		}
+
+		err = operations.CopyFile(ctx, fdst, fsrc, dstRemote, srcRemote)
+		if err == nil && hasProgress {
+			fn(models.Progress{
+				CurrentFile:      filepath.Base(src),
+				BytesTransferred: totalBytes,
+				TotalBytes:       totalBytes,
+				Percentage:       100.0,
+			})
+		}
+		return err
 	}
 
 	// Directory copy
@@ -122,7 +143,104 @@ func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("failed to open dst dir %q: %w", dst, err)
 	}
 
-	return sync.CopyDir(ctx, fdstSub, fsrcSub, true)
+	if hasProgress {
+		fn(models.Progress{
+			CurrentFile:      filepath.Base(src),
+			BytesTransferred: 0,
+			TotalBytes:       0,
+			Percentage:       0.0,
+		})
+	}
+
+	err = sync.CopyDir(ctx, fdstSub, fsrcSub, true)
+	if err == nil && hasProgress {
+		fn(models.Progress{
+			CurrentFile:      filepath.Base(src),
+			BytesTransferred: 100,
+			TotalBytes:       100,
+			Percentage:       100.0,
+		})
+	}
+	return err
+}
+
+// Move natively moves a file or directory from src to dst.
+func (r *RcloneEngine) Move(ctx context.Context, src, dst string) error {
+	srcFs, srcRemote, err := fspath.Split(src)
+	if err != nil {
+		return fmt.Errorf("invalid src path %q: %w", src, err)
+	}
+	dstFs, dstRemote, err := fspath.Split(dst)
+	if err != nil {
+		return fmt.Errorf("invalid dst path %q: %w", dst, err)
+	}
+
+	fsrc, err := fs.NewFs(ctx, srcFs)
+	if err != nil {
+		return fmt.Errorf("failed to open src fs %q: %w", srcFs, err)
+	}
+
+	fdst, err := fs.NewFs(ctx, dstFs)
+	if err != nil {
+		return fmt.Errorf("failed to open dst fs %q: %w", dstFs, err)
+	}
+
+	fn, hasProgress := GetProgressHandler(ctx)
+
+	obj, err := fsrc.NewObject(ctx, srcRemote)
+	if err == nil {
+		// Single file move
+		totalBytes := obj.Size()
+		if hasProgress {
+			fn(models.Progress{
+				CurrentFile:      filepath.Base(src),
+				BytesTransferred: 0,
+				TotalBytes:       totalBytes,
+				Percentage:       0.0,
+			})
+		}
+
+		err = operations.MoveFile(ctx, fdst, fsrc, dstRemote, srcRemote)
+		if err == nil && hasProgress {
+			fn(models.Progress{
+				CurrentFile:      filepath.Base(src),
+				BytesTransferred: totalBytes,
+				TotalBytes:       totalBytes,
+				Percentage:       100.0,
+			})
+		}
+		return err
+	}
+
+	// Directory move
+	fsrcSub, err := fs.NewFs(ctx, src)
+	if err != nil {
+		return fmt.Errorf("failed to open src dir %q: %w", src, err)
+	}
+	fdstSub, err := fs.NewFs(ctx, dst)
+	if err != nil {
+		return fmt.Errorf("failed to open dst dir %q: %w", dst, err)
+	}
+
+	if hasProgress {
+		fn(models.Progress{
+			CurrentFile:      filepath.Base(src),
+			BytesTransferred: 0,
+			TotalBytes:       0,
+			Percentage:       0.0,
+		})
+	}
+
+	err = sync.MoveDir(ctx, fdstSub, fsrcSub, true, true)
+	if err == nil && hasProgress {
+		fn(models.Progress{
+			CurrentFile:      filepath.Base(src),
+			BytesTransferred: 100,
+			TotalBytes:       100,
+			Percentage:       100.0,
+		})
+	}
+	return err
 }
 
 // Delete removes a file or directory at the given path.
