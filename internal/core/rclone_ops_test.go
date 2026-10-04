@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/M5Devs/Total-Connect/internal/models"
 )
 
 func TestRcloneEngineLocalOps(t *testing.T) {
@@ -67,5 +69,64 @@ func TestRcloneEngineLocalOps(t *testing.T) {
 
 	if _, err := os.Stat(dstFile); !os.IsNotExist(err) {
 		t.Errorf("expected deleted file to no longer exist at %s", dstFile)
+	}
+}
+
+func TestRcloneEngineMoveFileAndDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "rclone.conf")
+
+	engine, err := NewRcloneEngine(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to create RcloneEngine: %v", err)
+	}
+
+	var reportedProgress []models.Progress
+	progressFn := func(p models.Progress) {
+		reportedProgress = append(reportedProgress, p)
+	}
+	ctx := WithProgressHandler(context.Background(), progressFn)
+
+	// Create src directory and file
+	srcDir := filepath.Join(tmpDir, "srcdir")
+	err = engine.Mkdir(ctx, srcDir)
+	if err != nil {
+		t.Fatalf("Mkdir srcDir failed: %v", err)
+	}
+
+	srcFile := filepath.Join(srcDir, "file_to_move.txt")
+	err = os.WriteFile(srcFile, []byte("moving content"), 0644)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	dstFile := filepath.Join(srcDir, "file_moved.txt")
+	err = engine.Move(ctx, srcFile, dstFile)
+	if err != nil {
+		t.Fatalf("Move file failed: %v", err)
+	}
+
+	// Verify original file is gone and destination exists
+	if _, err := os.Stat(srcFile); !os.IsNotExist(err) {
+		t.Errorf("expected srcFile to be moved and not exist at %s", srcFile)
+	}
+	if _, err := os.Stat(dstFile); os.IsNotExist(err) {
+		t.Errorf("expected dstFile to exist at %s", dstFile)
+	}
+
+	if len(reportedProgress) == 0 {
+		t.Errorf("expected progress callbacks to be called")
+	}
+
+	// Test Directory Move
+	dstDir := filepath.Join(tmpDir, "dstdir")
+	err = engine.Move(ctx, srcDir, dstDir)
+	if err != nil {
+		t.Fatalf("Move directory failed: %v", err)
+	}
+
+	movedFilePath := filepath.Join(dstDir, "file_moved.txt")
+	if _, err := os.Stat(movedFilePath); os.IsNotExist(err) {
+		t.Errorf("expected moved directory content to exist at %s", movedFilePath)
 	}
 }
