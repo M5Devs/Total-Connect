@@ -5,18 +5,28 @@ const state = {
   remotes: [],
   isEditingRemote: false,
   editingRemoteName: '',
+  settings: {
+    showHidden: false,
+    defaultView: 'list' // 'list' or 'grid'
+  },
   panes: {
     left: {
       remote: 'local',
       path: '.',
       items: [],
-      selected: new Set()
+      filter: '',
+      selected: new Set(),
+      viewMode: 'list', // 'list' or 'grid'
+      isEditingPath: false
     },
     right: {
       remote: 'local',
       path: '.',
       items: [],
-      selected: new Set()
+      filter: '',
+      selected: new Set(),
+      viewMode: 'list',
+      isEditingPath: false
     }
   }
 };
@@ -27,11 +37,193 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initApp() {
+  loadSettingsFromStorage();
+  setupEventListeners();
   await loadRemotes();
   await loadPane('left');
   await loadPane('right');
   updateUI();
   initWizard();
+}
+
+// LocalStorage Settings Management
+function loadSettingsFromStorage() {
+  try {
+    const saved = localStorage.getItem('tc_settings');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed.showHidden === 'boolean') state.settings.showHidden = parsed.showHidden;
+      if (parsed.defaultView === 'list' || parsed.defaultView === 'grid') {
+        state.settings.defaultView = parsed.defaultView;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load settings:', err);
+  }
+
+  // Set initial pane view modes from settings
+  state.panes.left.viewMode = state.settings.defaultView;
+  state.panes.right.viewMode = state.settings.defaultView;
+  updateViewToggleHeaderBtn();
+}
+
+function saveSettingsToStorage() {
+  try {
+    localStorage.setItem('tc_settings', JSON.stringify(state.settings));
+  } catch (err) {
+    console.error('Failed to save settings:', err);
+  }
+}
+
+// Event Delegation & Event Listeners (XSS Hardened)
+function setupEventListeners() {
+  // Global Header Actions
+  document.getElementById('btn-view-toggle')?.addEventListener('click', toggleHeaderViewMode);
+  document.getElementById('btn-settings')?.addEventListener('click', openSettingsModal);
+  document.getElementById('btn-add-conn')?.addEventListener('click', openWizardModal);
+
+  // Settings Modal Buttons
+  document.getElementById('btn-close-settings')?.addEventListener('click', () => closeModal('settings-modal'));
+  document.getElementById('btn-cancel-settings')?.addEventListener('click', () => closeModal('settings-modal'));
+  document.getElementById('btn-save-settings')?.addEventListener('click', saveSettingsFromModal);
+
+  // Mobile Tabs
+  document.getElementById('mobile-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-tab]');
+    if (btn) {
+      const tab = btn.getAttribute('data-tab');
+      if (tab) switchMobileTab(tab);
+    }
+  });
+
+  // Pane Active Focus Listeners
+  ['left', 'right'].forEach(paneId => {
+    const paneEl = document.getElementById(`pane-${paneId}`);
+    paneEl?.addEventListener('click', (e) => {
+      setActivePane(paneId);
+    });
+
+    // Remote selector change
+    const remoteSelect = document.getElementById(`remote-select-${paneId}`);
+    remoteSelect?.addEventListener('change', (e) => {
+      onRemoteSelectChange(paneId, e.target.value);
+    });
+
+    // Up parent directory button
+    document.getElementById(`btn-up-${paneId}`)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigateParent(paneId);
+    });
+
+    // Address bar click / Edit path button
+    document.getElementById(`breadcrumbs-${paneId}`)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const breadcrumb = e.target.closest('[data-path]');
+      if (breadcrumb) {
+        const targetPath = breadcrumb.getAttribute('data-path');
+        navigateToPath(paneId, state.panes[paneId].remote, targetPath);
+      } else {
+        // Clicked empty space in address bar -> enter path edit mode
+        enablePathEditMode(paneId);
+      }
+    });
+
+    document.getElementById(`btn-edit-path-${paneId}`)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      enablePathEditMode(paneId);
+    });
+
+    // Path edit text input enter / escape / blur
+    const pathInput = document.getElementById(`path-input-${paneId}`);
+    pathInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitPathEdit(paneId, pathInput.value);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        disablePathEditMode(paneId);
+      }
+    });
+    pathInput?.addEventListener('blur', () => {
+      disablePathEditMode(paneId);
+    });
+
+    // Filter input
+    const filterInput = document.getElementById(`filter-input-${paneId}`);
+    filterInput?.addEventListener('input', (e) => {
+      state.panes[paneId].filter = e.target.value.toLowerCase().trim();
+      renderPaneList(paneId);
+    });
+
+    // Select all checkbox
+    const selectAllChk = document.getElementById(`select-all-${paneId}`);
+    selectAllChk?.addEventListener('change', (e) => {
+      toggleSelectAll(paneId, e.target.checked);
+    });
+
+    // File list event delegation for rows/cards
+    const listContainer = document.getElementById(`file-list-${paneId}`);
+    listContainer?.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-item-name]');
+      if (!row) return;
+
+      const itemName = row.getAttribute('data-item-name');
+      const isDir = row.getAttribute('data-is-dir') === 'true';
+
+      // Checkbox click check
+      if (e.target.matches('input[type="checkbox"]')) {
+        e.stopPropagation();
+        toggleItemSelect(paneId, itemName, e.target.checked);
+        return;
+      }
+
+      onRowClick(paneId, itemName, isDir, e);
+    });
+  });
+
+  // Action Toolbar Buttons
+  document.getElementById('btn-action-copy')?.addEventListener('click', handleCopy);
+  document.getElementById('btn-action-move')?.addEventListener('click', handleMove);
+  document.getElementById('btn-action-mkdir')?.addEventListener('click', openMkdirModal);
+  document.getElementById('btn-action-delete')?.addEventListener('click', handleDelete);
+  document.getElementById('btn-action-refresh')?.addEventListener('click', refreshActivePane);
+  document.getElementById('btn-action-remotes')?.addEventListener('click', openChangeRemoteModal);
+
+  // Mkdir Modal
+  document.getElementById('btn-confirm-mkdir')?.addEventListener('click', confirmMkdir);
+  document.getElementById('btn-cancel-mkdir')?.addEventListener('click', () => closeModal('mkdir-modal'));
+
+  // Remote Management Modal Event Delegation
+  document.getElementById('btn-close-remote-modal')?.addEventListener('click', () => closeModal('remote-modal'));
+  document.getElementById('btn-remote-modal-close')?.addEventListener('click', () => closeModal('remote-modal'));
+  document.getElementById('btn-remote-modal-add')?.addEventListener('click', () => {
+    closeModal('remote-modal');
+    openWizardModal();
+  });
+
+  document.getElementById('remote-list-modal-body')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-remote-action]');
+    if (!btn) return;
+
+    const action = btn.getAttribute('data-remote-action');
+    const remote = btn.getAttribute('data-remote');
+
+    if (action === 'select') {
+      selectRemoteFromModal(remote);
+    } else if (action === 'edit') {
+      editRemote(remote);
+    } else if (action === 'delete') {
+      deleteRemote(remote);
+    }
+  });
+
+  // Wizard Modal
+  document.getElementById('btn-close-wizard')?.addEventListener('click', () => closeModal('wizard-modal'));
+  document.getElementById('btn-cancel-wizard')?.addEventListener('click', () => closeModal('wizard-modal'));
+  document.getElementById('wizard-type')?.addEventListener('change', (e) => {
+    onWizardTypeChange(e.target.value);
+  });
+  document.getElementById('wizard-form')?.addEventListener('submit', handleWizardSubmit);
 }
 
 // API Calls
@@ -91,8 +283,8 @@ function renderRemoteModalList() {
 
   let html = `
     <div class="remote-item-row" style="display:flex; align-items:center; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.1);">
-      <span style="font-weight:bold; cursor:pointer;" onclick="selectRemoteFromModal('local')">📁 Local Filesystem</span>
-      <button class="action-btn primary" style="padding:4px 8px; font-size:0.8rem;" onclick="selectRemoteFromModal('local')">Select</button>
+      <span style="font-weight:bold; cursor:pointer;" data-remote-action="select" data-remote="local">📁 Local Filesystem</span>
+      <button class="action-btn primary" style="padding:4px 8px; font-size:0.8rem;" data-remote-action="select" data-remote="local">Select</button>
     </div>
   `;
 
@@ -103,11 +295,11 @@ function renderRemoteModalList() {
       const cleanName = remote.endsWith(':') ? remote.slice(0, -1) : remote;
       html += `
         <div class="remote-item-row" style="display:flex; align-items:center; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.1);">
-          <span style="font-weight:bold; cursor:pointer;" onclick="selectRemoteFromModal('${escapeJs(remote)}')">☁️ ${escapeHtml(cleanName)}</span>
+          <span style="font-weight:bold; cursor:pointer;" data-remote-action="select" data-remote="${escapeHtml(remote)}">☁️ ${escapeHtml(cleanName)}</span>
           <div style="display:flex; gap:6px;">
-            <button class="action-btn primary" style="padding:4px 8px; font-size:0.8rem;" onclick="selectRemoteFromModal('${escapeJs(remote)}')">Select</button>
-            <button class="action-btn secondary" style="padding:4px 8px; font-size:0.8rem;" onclick="editRemote('${escapeJs(cleanName)}')">✏️ Edit</button>
-            <button class="action-btn danger" style="padding:4px 8px; font-size:0.8rem;" onclick="deleteRemote('${escapeJs(cleanName)}')">🗑️ Delete</button>
+            <button class="action-btn primary" style="padding:4px 8px; font-size:0.8rem;" data-remote-action="select" data-remote="${escapeHtml(remote)}">Select</button>
+            <button class="action-btn secondary" style="padding:4px 8px; font-size:0.8rem;" data-remote-action="edit" data-remote="${escapeHtml(cleanName)}">✏️ Edit</button>
+            <button class="action-btn danger" style="padding:4px 8px; font-size:0.8rem;" data-remote-action="delete" data-remote="${escapeHtml(cleanName)}">🗑️ Delete</button>
           </div>
         </div>
       `;
@@ -179,15 +371,18 @@ async function loadPane(paneId) {
 
   const query = new URLSearchParams({
     remote: pane.remote,
-    path: pane.path
+    path: pane.path,
+    hidden: state.settings.showHidden ? 'true' : 'false'
   });
 
   try {
     const items = await apiCall(`api/entries?${query.toString()}`);
     pane.items = sortEntries(items || []);
+    renderAddressBar(paneId);
     renderPaneList(paneId);
   } catch (err) {
     pane.items = [];
+    renderAddressBar(paneId);
     renderPaneList(paneId);
   }
 }
@@ -202,58 +397,207 @@ function sortEntries(items) {
   return [...dirs, ...files];
 }
 
-// Rendering
+// Dual-Mode Address Bar Logic
+function renderAddressBar(paneId) {
+  const pane = state.panes[paneId];
+  const breadcrumbsEl = document.getElementById(`breadcrumbs-${paneId}`);
+  if (!breadcrumbsEl) return;
+
+  const displayRemote = pane.remote === 'local' ? 'Local' : pane.remote;
+  let html = `<span class="breadcrumb-item" data-path=".">${escapeHtml(displayRemote)}</span>`;
+
+  if (pane.path && pane.path !== '.' && pane.path !== '/') {
+    const segments = pane.path.split('/').filter(Boolean);
+    let accum = '';
+    segments.forEach((seg, idx) => {
+      accum = accum ? `${accum}/${seg}` : seg;
+      html += `<span class="breadcrumb-separator">/</span>`;
+      html += `<span class="breadcrumb-item" data-path="${escapeHtml(accum)}">${escapeHtml(seg)}</span>`;
+    });
+  }
+
+  breadcrumbsEl.innerHTML = html;
+}
+
+function enablePathEditMode(paneId) {
+  const pane = state.panes[paneId];
+  pane.isEditingPath = true;
+
+  const breadcrumbsEl = document.getElementById(`breadcrumbs-${paneId}`);
+  const inputEl = document.getElementById(`path-input-${paneId}`);
+
+  if (breadcrumbsEl) breadcrumbsEl.classList.add('hidden');
+  if (inputEl) {
+    inputEl.classList.remove('hidden');
+
+    let fullPathStr = pane.path;
+    if (pane.remote && pane.remote !== 'local') {
+      const cleanRemote = pane.remote.endsWith(':') ? pane.remote : `${pane.remote}:`;
+      fullPathStr = pane.path === '.' ? cleanRemote : `${cleanRemote}${pane.path}`;
+    }
+    inputEl.value = fullPathStr;
+    inputEl.focus();
+    inputEl.select();
+  }
+}
+
+function disablePathEditMode(paneId) {
+  const pane = state.panes[paneId];
+  pane.isEditingPath = false;
+
+  const breadcrumbsEl = document.getElementById(`breadcrumbs-${paneId}`);
+  const inputEl = document.getElementById(`path-input-${paneId}`);
+
+  if (breadcrumbsEl) breadcrumbsEl.classList.remove('hidden');
+  if (inputEl) inputEl.classList.add('hidden');
+}
+
+function submitPathEdit(paneId, rawInputValue) {
+  const trimmed = rawInputValue.trim();
+  disablePathEditMode(paneId);
+  if (!trimmed) return;
+
+  let targetRemote = 'local';
+  let targetPath = trimmed;
+
+  const colonIdx = trimmed.indexOf(':');
+  if (colonIdx !== -1) {
+    const potentialRemote = trimmed.slice(0, colonIdx + 1); // e.g. "gdrive:"
+    const cleanRemoteName = potentialRemote.slice(0, -1);
+
+    // Check if potentialRemote is a known remote or matches clean remote
+    const match = state.remotes.find(r => r === potentialRemote || r.slice(0, -1) === cleanRemoteName);
+    if (match) {
+      targetRemote = match;
+      targetPath = trimmed.slice(colonIdx + 1);
+    }
+  }
+
+  navigateToPath(paneId, targetRemote, targetPath);
+}
+
+function navigateToPath(paneId, remote, targetPath) {
+  const pane = state.panes[paneId];
+  pane.remote = remote;
+  pane.path = targetPath || '.';
+
+  // Update remote dropdown UI
+  const remoteSelect = document.getElementById(`remote-select-${paneId}`);
+  if (remoteSelect) remoteSelect.value = pane.remote;
+
+  loadPane(paneId);
+}
+
+// File Extension Icon Helper (Microsoft Files / Fluent Icons)
+function getFileTypeIcon(item) {
+  if (item.is_dir) return '📁';
+
+  const ext = item.name.split('.').pop().toLowerCase();
+  switch (ext) {
+    case 'zip': case 'tar': case 'gz': case 'bz2': case '7z': case 'rar': case 'xz':
+      return '📦';
+    case 'mp4': case 'mkv': case 'avi': case 'mov': case 'wmv': case 'flv': case 'webm':
+      return '🎬';
+    case 'mp3': case 'wav': case 'flac': case 'aac': case 'ogg': case 'm4a':
+      return '🎵';
+    case 'go': case 'js': case 'ts': case 'py': case 'html': case 'css': case 'json': case 'sh': case 'c': case 'cpp':
+      return '💻';
+    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'svg': case 'webp': case 'bmp': case 'ico':
+      return '🖼️';
+    case 'pdf': case 'txt': case 'md': case 'doc': case 'docx': case 'xls': case 'xlsx': case 'ppt': case 'pptx':
+      return '📄';
+    default:
+      return '📄';
+  }
+}
+
+// Rendering List vs Grid View
 function renderPaneList(paneId) {
   const pane = state.panes[paneId];
   const container = document.getElementById(`file-list-${paneId}`);
-  const pathInput = document.getElementById(`path-input-${paneId}`);
+  const header = document.getElementById(`table-header-${paneId}`);
   const footer = document.getElementById(`pane-footer-${paneId}`);
 
-  if (pathInput) {
-    pathInput.value = pane.path;
+  if (!container) return;
+
+  // Toggle list vs grid CSS classes
+  if (pane.viewMode === 'grid') {
+    container.className = 'file-list grid-view';
+    if (header) header.classList.add('hidden');
+  } else {
+    container.className = 'file-list list-view';
+    if (header) header.classList.remove('hidden');
   }
 
-  if (!container) return;
   container.innerHTML = '';
+
+  // Apply instant filter
+  let visibleItems = pane.items;
+  if (pane.filter) {
+    visibleItems = pane.items.filter(i => i.name.toLowerCase().includes(pane.filter));
+  }
 
   let html = '';
 
   if (canNavigateUp(pane.path)) {
-    html += `
-      <div class="file-row" onclick="onRowClick('${paneId}', '..', true, event)">
-        <span class="col-check"></span>
-        <span class="col-name">
-          <span class="item-icon">📁</span>
-          <span class="item-name is-parent">..</span>
-        </span>
-        <span class="col-size">&lt;UP&gt;</span>
-        <span class="col-mtime"></span>
-      </div>
-    `;
+    if (pane.viewMode === 'grid') {
+      html += `
+        <div class="file-card" data-item-name=".." data-is-dir="true">
+          <div class="card-icon">📁</div>
+          <div class="card-name is-dir">.. (Parent)</div>
+          <div class="card-meta">&lt;UP&gt;</div>
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="file-row" data-item-name=".." data-is-dir="true">
+          <span class="col-check"></span>
+          <span class="col-name">
+            <span class="item-icon">📁</span>
+            <span class="item-name is-parent">..</span>
+          </span>
+          <span class="col-size">&lt;UP&gt;</span>
+          <span class="col-mtime"></span>
+        </div>
+      `;
+    }
   }
 
-  if (pane.items.length === 0) {
-    html += `<div class="file-row" style="color: var(--text-muted); justify-content: center;">(Empty Directory)</div>`;
+  if (visibleItems.length === 0) {
+    html += `<div style="grid-column: 1/-1; padding: 20px; color: var(--text-muted); text-align: center;">(No items found)</div>`;
   } else {
-    pane.items.forEach((item, index) => {
+    visibleItems.forEach((item) => {
       const isSelected = pane.selected.has(item.name);
-      const icon = item.is_dir ? '📁' : '📄';
+      const icon = getFileTypeIcon(item);
       const sizeStr = item.is_dir ? '&lt;DIR&gt;' : formatSize(item.size);
       const mtimeStr = item.mod_time ? formatDate(item.mod_time) : '';
 
-      html += `
-        <div class="file-row ${isSelected ? 'selected' : ''}" onclick="onRowClick('${paneId}', '${escapeJs(item.name)}', ${item.is_dir}, event)">
-          <span class="col-check" onclick="event.stopPropagation()">
-            <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleItemSelect('${paneId}', '${escapeJs(item.name)}', this.checked)">
-          </span>
-          <span class="col-name">
-            <span class="item-icon">${icon}</span>
-            <span class="item-name ${item.is_dir ? 'is-dir' : ''}">${escapeHtml(item.name)}</span>
-          </span>
-          <span class="col-size">${sizeStr}</span>
-          <span class="col-mtime">${mtimeStr}</span>
-        </div>
-      `;
+      if (pane.viewMode === 'grid') {
+        html += `
+          <div class="file-card ${isSelected ? 'selected' : ''}" data-item-name="${escapeHtml(item.name)}" data-is-dir="${item.is_dir}">
+            <div class="card-check">
+              <input type="checkbox" ${isSelected ? 'checked' : ''}>
+            </div>
+            <div class="card-icon">${icon}</div>
+            <div class="card-name ${item.is_dir ? 'is-dir' : ''}">${escapeHtml(item.name)}</div>
+            <div class="card-meta">${sizeStr}</div>
+          </div>
+        `;
+      } else {
+        html += `
+          <div class="file-row ${isSelected ? 'selected' : ''}" data-item-name="${escapeHtml(item.name)}" data-is-dir="${item.is_dir}">
+            <span class="col-check">
+              <input type="checkbox" ${isSelected ? 'checked' : ''}>
+            </span>
+            <span class="col-name">
+              <span class="item-icon">${icon}</span>
+              <span class="item-name ${item.is_dir ? 'is-dir' : ''}">${escapeHtml(item.name)}</span>
+            </span>
+            <span class="col-size">${sizeStr}</span>
+            <span class="col-mtime">${mtimeStr}</span>
+          </div>
+        `;
+      }
     });
   }
 
@@ -261,7 +605,57 @@ function renderPaneList(paneId) {
 
   if (footer) {
     const selCount = pane.selected.size;
-    footer.innerText = `${pane.items.length} items ${selCount > 0 ? `(${selCount} selected)` : ''}`;
+    footer.innerText = `${visibleItems.length} items ${selCount > 0 ? `(${selCount} selected)` : ''}`;
+  }
+}
+
+// Settings Modal Logic
+function openSettingsModal() {
+  const chkHidden = document.getElementById('setting-show-hidden');
+  const selDefaultView = document.getElementById('setting-default-view');
+
+  if (chkHidden) chkHidden.checked = state.settings.showHidden;
+  if (selDefaultView) selDefaultView.value = state.settings.defaultView;
+
+  document.getElementById('settings-modal')?.classList.remove('hidden');
+}
+
+function saveSettingsFromModal() {
+  const chkHidden = document.getElementById('setting-show-hidden');
+  const selDefaultView = document.getElementById('setting-default-view');
+
+  if (chkHidden) state.settings.showHidden = chkHidden.checked;
+  if (selDefaultView) state.settings.defaultView = selDefaultView.value;
+
+  saveSettingsToStorage();
+  closeModal('settings-modal');
+
+  // Reload panes to reflect hidden files toggle
+  loadPane('left');
+  loadPane('right');
+  showToast('Preferences saved', 'success');
+}
+
+function toggleHeaderViewMode() {
+  const activePaneObj = state.panes[state.activePane];
+  activePaneObj.viewMode = activePaneObj.viewMode === 'list' ? 'grid' : 'list';
+  updateViewToggleHeaderBtn();
+  renderPaneList(state.activePane);
+}
+
+function updateViewToggleHeaderBtn() {
+  const iconEl = document.getElementById('view-toggle-icon');
+  const labelEl = document.getElementById('view-toggle-label');
+  const activeMode = state.panes[state.activePane].viewMode;
+
+  if (iconEl && labelEl) {
+    if (activeMode === 'list') {
+      iconEl.innerText = '🔲';
+      labelEl.innerText = 'Grid';
+    } else {
+      iconEl.innerText = '📄';
+      labelEl.innerText = 'List';
+    }
   }
 }
 
@@ -269,6 +663,7 @@ function renderPaneList(paneId) {
 function setActivePane(paneId) {
   state.activePane = paneId;
   updateUI();
+  updateViewToggleHeaderBtn();
 }
 
 function updateUI() {
@@ -503,7 +898,7 @@ function openMkdirModal() {
   const input = document.getElementById('mkdir-input');
   if (info) info.innerText = `In (${pane.remote}): ${pane.path}`;
   if (input) input.value = '';
-  document.getElementById('mkdir-modal').classList.remove('hidden');
+  document.getElementById('mkdir-modal')?.classList.remove('hidden');
 }
 
 async function confirmMkdir() {
@@ -533,7 +928,7 @@ async function confirmMkdir() {
 
 function openChangeRemoteModal() {
   populateRemoteSelectors();
-  document.getElementById('remote-modal').classList.remove('hidden');
+  document.getElementById('remote-modal')?.classList.remove('hidden');
 }
 
 function closeModal(modalId) {
@@ -1006,17 +1401,50 @@ function canNavigateUp(currentPath) {
   return true;
 }
 
+// Fixed getParentPath: Handles remote paths with colons correctly
+// e.g., remote:folder/subfolder -> remote:folder
+// e.g., remote:folder -> remote:
+// e.g., folder/subfolder -> folder
+// e.g., folder -> .
 function getParentPath(currentPath) {
-  if (!currentPath || currentPath === '.') return '.';
-  const parts = currentPath.split('/').filter(Boolean);
-  if (parts.length <= 1) return '.';
+  if (!currentPath || currentPath === '.' || currentPath === '/') return '.';
+
+  let remotePrefix = '';
+  let pathPart = currentPath;
+
+  const colonIdx = currentPath.indexOf(':');
+  if (colonIdx !== -1) {
+    remotePrefix = currentPath.slice(0, colonIdx + 1); // "remote:"
+    pathPart = currentPath.slice(colonIdx + 1);       // "folder/subfolder"
+  }
+
+  // Trim leading/trailing slashes on pathPart
+  pathPart = pathPart.replace(/^\/+|\/+$/g, '');
+
+  if (!pathPart) {
+    return remotePrefix || '.';
+  }
+
+  const parts = pathPart.split('/').filter(Boolean);
+  if (parts.length <= 1) {
+    return remotePrefix ? remotePrefix : '.';
+  }
+
   parts.pop();
-  return parts.join('/');
+  const parentSubPath = parts.join('/');
+  return remotePrefix ? `${remotePrefix}${parentSubPath}` : parentSubPath;
 }
 
 function joinPath(base, child) {
   if (!base || base === '.') return child;
-  if (base.endsWith('/')) return base + child;
+
+  // Handle trailing colon/slash
+  if (base.endsWith(':')) {
+    return `${base}${child}`;
+  }
+  if (base.endsWith('/')) {
+    return `${base}${child}`;
+  }
   return `${base}/${child}`;
 }
 
@@ -1041,8 +1469,4 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
-}
-
-function escapeJs(str) {
-  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }

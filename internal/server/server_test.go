@@ -397,3 +397,99 @@ func TestServer_GetRemoteConfig(t *testing.T) {
 		t.Errorf("unexpected response: %+v", data)
 	}
 }
+
+func TestServer_BasicAuth(t *testing.T) {
+	srv := NewServer(newMockEngine(), WithAuth("admin:secret"))
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// 1. Request without auth header should fail with 401
+	res, err := http.Get(ts.URL + "/api/remotes")
+	if err != nil {
+		t.Fatalf("failed GET /api/remotes: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized, got %d", res.StatusCode)
+	}
+
+	// 2. Request with invalid credentials should fail with 401
+	req, _ := http.NewRequest("GET", ts.URL+"/api/remotes", nil)
+	req.SetBasicAuth("admin", "wrong")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed GET with bad auth: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized, got %d", res.StatusCode)
+	}
+
+	// 3. Request with valid credentials should succeed
+	req, _ = http.NewRequest("GET", ts.URL+"/api/remotes", nil)
+	req.SetBasicAuth("admin", "secret")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed GET with good auth: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", res.StatusCode)
+	}
+}
+
+func TestServer_HiddenFiles(t *testing.T) {
+	mockEng := newMockEngine()
+	mockEng.entries["."] = append(mockEng.entries["."], models.FileItem{
+		Name:    ".env",
+		Path:    ".env",
+		Size:    12,
+		ModTime: time.Now(),
+		IsDir:   false,
+	}, models.FileItem{
+		Name:    ".git",
+		Path:    ".git",
+		Size:    0,
+		ModTime: time.Now(),
+		IsDir:   true,
+	})
+
+	srv := NewServer(mockEng)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Default (hidden not set or hidden=false): dotfiles excluded
+	res, err := http.Get(ts.URL + "/api/entries?remote=local&path=.")
+	if err != nil {
+		t.Fatalf("failed GET /api/entries: %v", err)
+	}
+	var items []models.FileItem
+	json.NewDecoder(res.Body).Decode(&items)
+	res.Body.Close()
+
+	for _, item := range items {
+		if strings.HasPrefix(item.Name, ".") {
+			t.Errorf("expected no dotfiles, got %s", item.Name)
+		}
+	}
+
+	// With hidden=true: dotfiles included
+	res, err = http.Get(ts.URL + "/api/entries?remote=local&path=.&hidden=true")
+	if err != nil {
+		t.Fatalf("failed GET /api/entries: %v", err)
+	}
+	var itemsWithHidden []models.FileItem
+	json.NewDecoder(res.Body).Decode(&itemsWithHidden)
+	res.Body.Close()
+
+	foundDotEnv := false
+	for _, item := range itemsWithHidden {
+		if item.Name == ".env" {
+			foundDotEnv = true
+			break
+		}
+	}
+	if !foundDotEnv {
+		t.Errorf("expected .env file in response when hidden=true")
+	}
+}
