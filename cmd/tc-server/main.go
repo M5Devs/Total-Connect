@@ -24,6 +24,7 @@ func main() {
 	hostFlag := flag.String("host", "0.0.0.0", "Server listen host")
 	portFlag := flag.String("port", defaultPort, "Server listen port")
 	configFlag := flag.String("config", "", "Path to custom rclone config file")
+	authFlag := flag.String("auth", os.Getenv("TC_AUTH"), "Web authentication credentials in format username:password")
 	flag.Parse()
 
 	engine, err := core.NewRcloneEngine(*configFlag)
@@ -31,7 +32,7 @@ func main() {
 		log.Fatalf("Failed to initialize storage engine: %v", err)
 	}
 
-	srv := server.NewServer(engine)
+	srv := server.NewServer(engine, server.WithAuth(*authFlag))
 	addr := fmt.Sprintf("%s:%s", *hostFlag, *portFlag)
 
 	httpServer := &http.Server{

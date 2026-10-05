@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -11,17 +12,41 @@ import (
 	"github.com/M5Devs/Total-Connect/web"
 )
 
-// Server handles HTTP requests for the web UI and REST API.
-type Server struct {
-	engine core.StorageEngine
-	mux    *http.ServeMux
+// Option defines a functional option for configuring the Server.
+type Option func(*Server)
+
+// WithAuth sets the username:password basic authentication credentials for the server.
+func WithAuth(auth string) Option {
+	return func(s *Server) {
+		auth = strings.TrimSpace(auth)
+		if auth != "" {
+			parts := strings.SplitN(auth, ":", 2)
+			if len(parts) == 2 {
+				s.authUser = parts[0]
+				s.authPass = parts[1]
+				s.authEnabled = true
+			}
+		}
+	}
 }
 
-// NewServer creates a new Server instance using the given StorageEngine.
-func NewServer(engine core.StorageEngine) *Server {
+// Server handles HTTP requests for the web UI and REST API.
+type Server struct {
+	engine      core.StorageEngine
+	mux         *http.ServeMux
+	authEnabled bool
+	authUser    string
+	authPass    string
+}
+
+// NewServer creates a new Server instance using the given StorageEngine and options.
+func NewServer(engine core.StorageEngine, opts ...Option) *Server {
 	s := &Server{
 		engine: engine,
 		mux:    http.NewServeMux(),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	s.routes()
 	return s
@@ -37,6 +62,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
+	}
+
+	if s.authEnabled {
+		user, pass, ok := r.BasicAuth()
+		if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(s.authUser)) != 1 || subtle.ConstantTimeCompare([]byte(pass), []byte(s.authPass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Total Connect"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	s.mux.ServeHTTP(w, r)
@@ -169,6 +203,7 @@ func (s *Server) handleDeleteRemote(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	remote := r.URL.Query().Get("remote")
 	path := r.URL.Query().Get("path")
+	showHidden := r.URL.Query().Get("hidden") == "true"
 
 	fullPath := buildFullPath(remote, path)
 
@@ -183,6 +218,9 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	var files []models.FileItem
 
 	for _, item := range entries {
+		if !showHidden && strings.HasPrefix(item.Name, ".") && item.Name != ".." {
+			continue
+		}
 		if item.IsDir {
 			dirs = append(dirs, item)
 		} else {
