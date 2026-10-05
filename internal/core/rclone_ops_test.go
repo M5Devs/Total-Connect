@@ -263,3 +263,73 @@ func TestRcloneEngineSFTPKeyUseAgentDefault(t *testing.T) {
 		t.Errorf("expected key_use_agent to be 'true', got %q", valWithAgent)
 	}
 }
+
+func TestRcloneEngineBareFilenameCopy(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "rclone.conf")
+
+	engine, err := NewRcloneEngine(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to create RcloneEngine: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Switch working directory to tmpDir so bare "README.md" is in current working directory
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(origWd)
+	}()
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir to tmpDir: %v", err)
+	}
+
+	// Create bare file "README.md" in root/working dir
+	bareFile := "README.md"
+	if err := os.WriteFile(bareFile, []byte("root file content"), 0644); err != nil {
+		t.Fatalf("failed to create README.md: %v", err)
+	}
+
+	// Create target directory
+	targetDir := "target_folder"
+	if err := engine.Mkdir(ctx, targetDir); err != nil {
+		t.Fatalf("Mkdir targetDir failed: %v", err)
+	}
+
+	// Copy bare filename "README.md" to "target_folder"
+	dstPath := filepath.Join(targetDir, "README.md")
+	if err := engine.Copy(ctx, bareFile, dstPath); err != nil {
+		t.Fatalf("Copy bare filename %q failed: %v", bareFile, err)
+	}
+
+	if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+		t.Errorf("expected copied file to exist at %s", dstPath)
+	}
+
+	// Test copying bare filename directly to target directory path
+	dstDirOnly := targetDir
+	if err := engine.Copy(ctx, bareFile, dstDirOnly); err != nil {
+		t.Fatalf("Copy bare filename to directory %q failed: %v", dstDirOnly, err)
+	}
+
+	// Test moving bare file
+	moveSrc := "MOVE_ME.txt"
+	if err := os.WriteFile(moveSrc, []byte("move content"), 0644); err != nil {
+		t.Fatalf("failed to create MOVE_ME.txt: %v", err)
+	}
+	moveDst := filepath.Join(targetDir, "MOVED.txt")
+	if err := engine.Move(ctx, moveSrc, moveDst); err != nil {
+		t.Fatalf("Move bare filename failed: %v", err)
+	}
+
+	if _, err := os.Stat(moveSrc); !os.IsNotExist(err) {
+		t.Errorf("expected original moveSrc file to no longer exist")
+	}
+	if _, err := os.Stat(moveDst); os.IsNotExist(err) {
+		t.Errorf("expected moved file to exist at %s", moveDst)
+	}
+}

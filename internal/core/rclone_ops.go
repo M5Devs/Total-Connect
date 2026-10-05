@@ -87,15 +87,52 @@ func (r *RcloneEngine) ListEntries(ctx context.Context, remotePath string) ([]mo
 	return items, nil
 }
 
+// splitFsAndRemote splits a path into its filesystem component and remote item name.
+// If the extracted filesystem component is empty (e.g. for bare filenames like "README.md"),
+// it normalizes it to ".". If it's a remote root (e.g. "remote:"), it preserves it.
+func splitFsAndRemote(p string) (string, string, error) {
+	fsPath, remote, err := fspath.Split(p)
+	if err != nil {
+		return "", "", err
+	}
+	if fsPath == "" {
+		fsPath = "."
+	}
+	return fsPath, remote, nil
+}
+
+func resolveDstFsAndRemote(ctx context.Context, dst string, srcRemote string) (fs.Fs, string, error) {
+	dstFs, dstRemote, err := splitFsAndRemote(dst)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid dst path %q: %w", dst, err)
+	}
+
+	fdst, err := fs.NewFs(ctx, dstFs)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open dst fs %q: %w", dstFs, err)
+	}
+
+	if dstRemote == "" {
+		return fdst, filepath.Base(srcRemote), nil
+	}
+
+	// Check if dstRemote is a directory on fdst
+	if _, errObj := fdst.NewObject(ctx, dstRemote); errObj != nil {
+		// Check if dst is a directory by listing or checking fs
+		if _, errList := fdst.List(ctx, dstRemote); errList == nil {
+			// dstRemote is a directory on fdst
+			return fdst, fspath.JoinRootPath(dstRemote, filepath.Base(srcRemote)), nil
+		}
+	}
+
+	return fdst, dstRemote, nil
+}
+
 // Copy copies a file or directory from src to dst.
 func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
-	srcFs, srcRemote, err := fspath.Split(src)
+	srcFs, srcRemote, err := splitFsAndRemote(src)
 	if err != nil {
 		return fmt.Errorf("invalid src path %q: %w", src, err)
-	}
-	dstFs, dstRemote, err := fspath.Split(dst)
-	if err != nil {
-		return fmt.Errorf("invalid dst path %q: %w", dst, err)
 	}
 
 	fsrc, err := fs.NewFs(ctx, srcFs)
@@ -103,16 +140,16 @@ func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("failed to open src fs %q: %w", srcFs, err)
 	}
 
-	fdst, err := fs.NewFs(ctx, dstFs)
-	if err != nil {
-		return fmt.Errorf("failed to open dst fs %q: %w", dstFs, err)
-	}
-
 	fn, hasProgress := GetProgressHandler(ctx)
 
 	obj, err := fsrc.NewObject(ctx, srcRemote)
 	if err == nil {
 		// Single file copy
+		fdst, dstRemote, err := resolveDstFsAndRemote(ctx, dst, srcRemote)
+		if err != nil {
+			return err
+		}
+
 		totalBytes := obj.Size()
 		if hasProgress {
 			fn(models.Progress{
@@ -168,13 +205,9 @@ func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
 
 // Move natively moves a file or directory from src to dst.
 func (r *RcloneEngine) Move(ctx context.Context, src, dst string) error {
-	srcFs, srcRemote, err := fspath.Split(src)
+	srcFs, srcRemote, err := splitFsAndRemote(src)
 	if err != nil {
 		return fmt.Errorf("invalid src path %q: %w", src, err)
-	}
-	dstFs, dstRemote, err := fspath.Split(dst)
-	if err != nil {
-		return fmt.Errorf("invalid dst path %q: %w", dst, err)
 	}
 
 	fsrc, err := fs.NewFs(ctx, srcFs)
@@ -182,22 +215,22 @@ func (r *RcloneEngine) Move(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("failed to open src fs %q: %w", srcFs, err)
 	}
 
-	fdst, err := fs.NewFs(ctx, dstFs)
-	if err != nil {
-		return fmt.Errorf("failed to open dst fs %q: %w", dstFs, err)
-	}
-
 	fn, hasProgress := GetProgressHandler(ctx)
 
 	obj, err := fsrc.NewObject(ctx, srcRemote)
 	if err == nil {
 		// Single file move
+		fdst, dstRemote, err := resolveDstFsAndRemote(ctx, dst, srcRemote)
+		if err != nil {
+			return err
+		}
+
 		totalBytes := obj.Size()
 		if hasProgress {
 			fn(models.Progress{
 				CurrentFile:      filepath.Base(src),
 				BytesTransferred: 0,
-				TotalBytes:       totalBytes,
+				TotalBytes:       0,
 				Percentage:       0.0,
 			})
 		}
@@ -247,7 +280,7 @@ func (r *RcloneEngine) Move(ctx context.Context, src, dst string) error {
 
 // Delete removes a file or directory at the given path.
 func (r *RcloneEngine) Delete(ctx context.Context, path string) error {
-	fsPath, remote, err := fspath.Split(path)
+	fsPath, remote, err := splitFsAndRemote(path)
 	if err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
@@ -267,7 +300,7 @@ func (r *RcloneEngine) Delete(ctx context.Context, path string) error {
 
 // Mkdir creates a directory at the given path.
 func (r *RcloneEngine) Mkdir(ctx context.Context, path string) error {
-	fsPath, remote, err := fspath.Split(path)
+	fsPath, remote, err := splitFsAndRemote(path)
 	if err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)
 	}
