@@ -814,3 +814,153 @@ body {
     gap: 6px;
   }
 }
+
+
+/* Touch Gestures & Swipe Feedback Styles */
+.file-row, .file-card {
+  touch-action: pan-y;
+  position: relative;
+  transition: transform 0.15s ease-out, background-color 0.2s ease;
+}
+
+.file-row.swipe-copy, .file-card.swipe-copy {
+  background-color: rgba(16, 124, 65, 0.3) !important;
+  border-color: #4ade80 !important;
+}
+
+.file-row.swipe-move, .file-card.swipe-move {
+  background-color: rgba(255, 179, 0, 0.3) !important;
+  border-color: var(--accent-yellow) !important;
+}
+
+/* Mobile Bottom Sheet Drawer */
+.bottom-sheet-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 2500;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  transition: opacity 0.2s ease;
+}
+
+.bottom-sheet-backdrop.hidden {
+  display: none;
+}
+
+.bottom-sheet-drawer {
+  background-color: rgba(24, 30, 40, 0.98);
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  width: 100%;
+  max-width: 500px;
+  padding: 12px 20px 24px 20px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.7);
+  animation: slideUp 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.sheet-handle {
+  width: 36px;
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  margin: 0 auto 4px auto;
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+}
+
+.sheet-file-icon {
+  font-size: 28px;
+}
+
+.sheet-file-info {
+  flex: 1;
+  overflow: hidden;
+}
+
+.sheet-file-info h4 {
+  font-size: 15px;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sheet-file-info p {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sheet-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background-color: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.sheet-action-btn:active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.sheet-action-btn.primary {
+  color: var(--accent-cyan);
+  border-color: rgba(0, 229, 255, 0.3);
+}
+
+.sheet-action-btn.warning {
+  color: var(--accent-yellow);
+  border-color: rgba(255, 179, 0, 0.3);
+}
+
+.sheet-action-btn.danger {
+  color: var(--accent-red);
+  border-color: rgba(243, 18, 96, 0.3);
+}
+
+.sheet-action-btn.secondary {
+  color: var(--text-main);
+}
+
+.sheet-icon {
+  font-size: 18px;
+}

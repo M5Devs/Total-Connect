@@ -143,6 +143,52 @@
       </button>
     </footer>
 
+
+    <!-- Bottom Sheet Modal Drawer (Mobile Touch Long-Press) -->
+    <div id="bottom-sheet-modal" class="bottom-sheet-backdrop hidden">
+      <div class="bottom-sheet-drawer" id="bottom-sheet-drawer">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <div class="sheet-file-icon" id="sheet-file-icon">📄</div>
+          <div class="sheet-file-info">
+            <h4 id="sheet-file-name">filename.txt</h4>
+            <p id="sheet-file-meta">Local &bull; 1.2 MB</p>
+          </div>
+          <button class="modal-close-btn" id="btn-close-sheet" aria-label="Close">✕</button>
+        </div>
+        <div class="sheet-actions">
+          <button class="sheet-action-btn primary" id="sheet-btn-copy">
+            <span class="sheet-icon">📋</span> Copy to Opposite Pane
+          </button>
+          <button class="sheet-action-btn warning" id="sheet-btn-move">
+            <span class="sheet-icon">🚚</span> Move to Opposite Pane
+          </button>
+          <button class="sheet-action-btn danger" id="sheet-btn-delete">
+            <span class="sheet-icon">🗑️</span> Delete Item
+          </button>
+          <button class="sheet-action-btn secondary" id="sheet-btn-details">
+            <span class="sheet-icon">ℹ️</span> View Details
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Details Modal -->
+    <div id="details-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="wizard-header">
+          <h3>ℹ️ Item Details</h3>
+          <button class="modal-close-btn" id="btn-close-details" aria-label="Close">✕</button>
+        </div>
+        <div class="details-body" id="details-body" style="font-size: 13px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+          <!-- Populated by JS -->
+        </div>
+        <div class="modal-actions" style="margin-top: 15px;">
+          <button class="action-btn secondary" id="btn-close-details-ack">Close</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toasts / Notifications Container -->
     <div id="toast-container" class="toast-container"></div>
 

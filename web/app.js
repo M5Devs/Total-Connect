@@ -1,6 +1,7 @@
 // Total Connect Web UI JavaScript
 
 const state = {
+  activeSheetItem: null, // { paneId, name, isDir, item }
   activePane: 'left',
   remotes: [],
   isEditingRemote: false,
@@ -224,6 +225,23 @@ function setupEventListeners() {
     onWizardTypeChange(e.target.value);
   });
   document.getElementById('wizard-form')?.addEventListener('submit', handleWizardSubmit);
+
+  // Bottom Sheet Modal Listeners
+  document.getElementById('btn-close-sheet')?.addEventListener('click', closeBottomSheet);
+  document.getElementById('bottom-sheet-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'bottom-sheet-modal') closeBottomSheet();
+  });
+  document.getElementById('sheet-btn-copy')?.addEventListener('click', handleSheetCopy);
+  document.getElementById('sheet-btn-move')?.addEventListener('click', handleSheetMove);
+  document.getElementById('sheet-btn-delete')?.addEventListener('click', handleSheetDelete);
+  document.getElementById('sheet-btn-details')?.addEventListener('click', handleSheetDetails);
+
+  // Details Modal Listeners
+  document.getElementById('btn-close-details')?.addEventListener('click', () => closeModal('details-modal'));
+  document.getElementById('btn-close-details-ack')?.addEventListener('click', () => closeModal('details-modal'));
+
+  // Mobile Header Tab Swiping (< 768px)
+  setupTabHeaderSwipe();
 }
 
 // API Calls
@@ -1469,4 +1487,306 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+
+/* Mobile Touch Gestures: Horizontal Swipe, Long-Press, and Tab Swipe */
+
+let longPressTimer = null;
+let touchStartX = 0;
+let touchStartY = 0;
+let currentTouchRow = null;
+let isSwiping = false;
+
+function attachItemTouchListeners(paneId, container) {
+  const items = container.querySelectorAll('[data-item-name]');
+  items.forEach(el => {
+    const itemName = el.getAttribute('data-item-name');
+    if (itemName === '..') return; // Do not apply gesture to parent directory row
+
+    el.addEventListener('touchstart', (e) => onTouchStart(e, paneId, el), { passive: true });
+    el.addEventListener('touchmove', (e) => onTouchMove(e, el), { passive: true });
+    el.addEventListener('touchend', (e) => onTouchEnd(e, paneId, el));
+    el.addEventListener('touchcancel', (e) => onTouchCancel(e, el));
+  });
+}
+
+function onTouchStart(e, paneId, el) {
+  if (e.touches.length !== 1) return;
+
+  const touch = e.touches[0];
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+  currentTouchRow = el;
+  isSwiping = false;
+
+  const itemName = el.getAttribute('data-item-name');
+  const isDir = el.getAttribute('data-is-dir') === 'true';
+
+  // Start long-press timer (~500ms)
+  clearTimeout(longPressTimer);
+  longPressTimer = setTimeout(() => {
+    // Long-press triggered!
+    if (navigator.vibrate) navigator.vibrate(40);
+    openBottomSheet(paneId, itemName, isDir);
+  }, 500);
+}
+
+function onTouchMove(e, el) {
+  if (!touchStartX || !touchStartY || el !== currentTouchRow) return;
+
+  const touch = e.touches[0];
+  const deltaX = touch.clientX - touchStartX;
+  const deltaY = touch.clientY - touchStartY;
+
+  // If finger moved significantly (> 10px), cancel long press
+  if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+    clearTimeout(longPressTimer);
+  }
+
+  // Check if movement is horizontal swipe rather than vertical scroll
+  if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 15) {
+    isSwiping = true;
+    // Visual translation feedback
+    el.style.transform = `translateX(${deltaX}px)`;
+
+    if (deltaX > 60) {
+      el.classList.add('swipe-copy');
+      el.classList.remove('swipe-move');
+    } else if (deltaX < -60) {
+      el.classList.add('swipe-move');
+      el.classList.remove('swipe-copy');
+    } else {
+      el.classList.remove('swipe-copy', 'swipe-move');
+    }
+  }
+}
+
+function onTouchEnd(e, paneId, el) {
+  clearTimeout(longPressTimer);
+
+  if (el !== currentTouchRow) return;
+
+  const deltaX = e.changedTouches[0].clientX - touchStartX;
+  const deltaY = e.changedTouches[0].clientY - touchStartY;
+
+  // Reset transform & styling
+  el.style.transform = '';
+  el.classList.remove('swipe-copy', 'swipe-move');
+
+  if (isSwiping && Math.abs(deltaX) > 60 && Math.abs(deltaX) > Math.abs(deltaY)) {
+    const itemName = el.getAttribute('data-item-name');
+
+    if (deltaX > 60) {
+      // Swipe Right -> Copy item to inactive pane
+      if (navigator.vibrate) navigator.vibrate(30);
+      triggerSingleItemCopy(paneId, itemName);
+    } else if (deltaX < -60) {
+      // Swipe Left -> Move item to inactive pane
+      if (navigator.vibrate) navigator.vibrate(30);
+      triggerSingleItemMove(paneId, itemName);
+    }
+  }
+
+  touchStartX = 0;
+  touchStartY = 0;
+  currentTouchRow = null;
+  isSwiping = false;
+}
+
+function onTouchCancel(e, el) {
+  clearTimeout(longPressTimer);
+  if (el) {
+    el.style.transform = '';
+    el.classList.remove('swipe-copy', 'swipe-move');
+  }
+  touchStartX = 0;
+  touchStartY = 0;
+  currentTouchRow = null;
+  isSwiping = false;
+}
+
+// Single Item Copy/Move Gesture Actions
+async function triggerSingleItemCopy(srcPaneId, itemName) {
+  const dstPaneId = srcPaneId === 'left' ? 'right' : 'left';
+  const srcPane = state.panes[srcPaneId];
+  const dstPane = state.panes[dstPaneId];
+
+  const srcPath = joinPath(srcPane.path, itemName);
+  const dstPath = joinPath(dstPane.path, itemName);
+
+  showToast(`📋 Copying "${itemName}"...`, 'info');
+
+  try {
+    await apiCall('api/copy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        srcRemote: srcPane.remote,
+        srcPath: srcPath,
+        dstRemote: dstPane.remote,
+        dstPath: dstPath
+      })
+    });
+    showToast(`Copied "${itemName}"`, 'success');
+    loadPane(dstPaneId);
+  } catch (err) {
+    showToast(`Failed copying ${itemName}: ${err.message}`, 'error');
+  }
+}
+
+async function triggerSingleItemMove(srcPaneId, itemName) {
+  const dstPaneId = srcPaneId === 'left' ? 'right' : 'left';
+  const srcPane = state.panes[srcPaneId];
+  const dstPane = state.panes[dstPaneId];
+
+  const srcPath = joinPath(srcPane.path, itemName);
+  const dstPath = joinPath(dstPane.path, itemName);
+
+  showToast(`🚚 Moving "${itemName}"...`, 'info');
+
+  try {
+    await apiCall('api/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        srcRemote: srcPane.remote,
+        srcPath: srcPath,
+        dstRemote: dstPane.remote,
+        dstPath: dstPath
+      })
+    });
+    showToast(`Moved "${itemName}"`, 'success');
+    loadPane(srcPaneId);
+    loadPane(dstPaneId);
+  } catch (err) {
+    showToast(`Failed moving ${itemName}: ${err.message}`, 'error');
+  }
+}
+
+// Bottom Sheet Drawer Handlers
+function openBottomSheet(paneId, itemName, isDir) {
+  const pane = state.panes[paneId];
+  const item = pane.items.find(i => i.name === itemName) || { name: itemName, is_dir: isDir, size: 0 };
+
+  state.activeSheetItem = { paneId, name: itemName, isDir, item };
+
+  const modal = document.getElementById('bottom-sheet-modal');
+  const iconEl = document.getElementById('sheet-file-icon');
+  const nameEl = document.getElementById('sheet-file-name');
+  const metaEl = document.getElementById('sheet-file-meta');
+
+  if (iconEl) iconEl.innerText = getFileTypeIcon(item);
+  if (nameEl) nameEl.innerText = item.name;
+  if (metaEl) {
+    const remoteStr = pane.remote === 'local' ? 'Local' : pane.remote;
+    const sizeStr = item.is_dir ? 'Directory' : formatSize(item.size);
+    metaEl.innerText = `${remoteStr} • ${sizeStr}`;
+  }
+
+  modal?.classList.remove('hidden');
+}
+
+function closeBottomSheet() {
+  const modal = document.getElementById('bottom-sheet-modal');
+  modal?.classList.add('hidden');
+  state.activeSheetItem = null;
+}
+
+function handleSheetCopy() {
+  if (!state.activeSheetItem) return;
+  const { paneId, name } = state.activeSheetItem;
+  closeBottomSheet();
+  triggerSingleItemCopy(paneId, name);
+}
+
+function handleSheetMove() {
+  if (!state.activeSheetItem) return;
+  const { paneId, name } = state.activeSheetItem;
+  closeBottomSheet();
+  triggerSingleItemMove(paneId, name);
+}
+
+async function handleSheetDelete() {
+  if (!state.activeSheetItem) return;
+  const { paneId, name } = state.activeSheetItem;
+  const pane = state.panes[paneId];
+  closeBottomSheet();
+
+  if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+
+  const itemPath = joinPath(pane.path, name);
+  showToast(`Deleting "${name}"...`, 'info');
+
+  try {
+    await apiCall('api/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remote: pane.remote, path: itemPath })
+    });
+    showToast(`Deleted "${name}"`, 'success');
+    loadPane(paneId);
+  } catch (err) {
+    showToast(`Failed deleting ${name}: ${err.message}`, 'error');
+  }
+}
+
+function handleSheetDetails() {
+  if (!state.activeSheetItem) return;
+  const { paneId, item } = state.activeSheetItem;
+  const pane = state.panes[paneId];
+  closeBottomSheet();
+
+  const detailsContainer = document.getElementById('details-body');
+  if (detailsContainer) {
+    const remoteStr = pane.remote === 'local' ? 'Local Filesystem' : pane.remote;
+    const pathStr = joinPath(pane.path, item.name);
+    const sizeStr = item.is_dir ? 'Directory' : formatSize(item.size);
+    const modTimeStr = item.mod_time ? formatDate(item.mod_time) : 'N/A';
+
+    detailsContainer.innerHTML = `
+      <div><strong>Name:</strong> ${escapeHtml(item.name)}</div>
+      <div><strong>Remote:</strong> ${escapeHtml(remoteStr)}</div>
+      <div><strong>Full Path:</strong> <code>${escapeHtml(pathStr)}</code></div>
+      <div><strong>Type:</strong> ${item.is_dir ? 'Folder' : 'File'}</div>
+      <div><strong>Size:</strong> ${sizeStr}</div>
+      <div><strong>Modified Date:</strong> ${modTimeStr}</div>
+    `;
+  }
+
+  document.getElementById('details-modal')?.classList.remove('hidden');
+}
+
+// Tab Header Swiping (< 768px)
+function setupTabHeaderSwipe() {
+  const mobileNav = document.getElementById('mobile-tabs');
+  if (!mobileNav) return;
+
+  let headerStartX = 0;
+  let headerStartY = 0;
+
+  mobileNav.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      headerStartX = e.touches[0].clientX;
+      headerStartY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  mobileNav.addEventListener('touchend', (e) => {
+    if (!headerStartX) return;
+    const deltaX = e.changedTouches[0].clientX - headerStartX;
+    const deltaY = e.changedTouches[0].clientY - headerStartY;
+
+    if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (deltaX < 0 && state.activePane === 'left') {
+        // Swipe Left on header -> switch to Right Pane
+        switchMobileTab('right');
+      } else if (deltaX > 0 && state.activePane === 'right') {
+        // Swipe Right on header -> switch to Left Pane
+        switchMobileTab('left');
+      }
+    }
+    headerStartX = 0;
+    headerStartY = 0;
+  });
 }
