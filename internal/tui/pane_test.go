@@ -125,3 +125,47 @@ func TestPaneSelectedItem(t *testing.T) {
 		t.Errorf("expected selected item 'doc.pdf', got %q", sel.Name)
 	}
 }
+
+func TestPaneMultiSelectAndPattern(t *testing.T) {
+	pane := NewPaneModel("test", ".")
+	items := []models.FileItem{
+		{Name: "app.go", IsDir: false},
+		{Name: "main.go", IsDir: false},
+		{Name: "readme.txt", IsDir: false},
+		{Name: "image.png", IsDir: false},
+	}
+	pane.SetItems(items)
+
+	// Single item toggle
+	pane.Cursor = 0
+	pane.ToggleSelection() // selects app.go and moves cursor down to index 1
+
+	if !pane.Selected[0] {
+		t.Errorf("expected item at index 0 to be selected")
+	}
+	if pane.Cursor != 1 {
+		t.Errorf("expected cursor to advance to 1, got %d", pane.Cursor)
+	}
+
+	selected := pane.GetSelectedItems()
+	if len(selected) != 1 || selected[0].Name != "app.go" {
+		t.Errorf("expected GetSelectedItems to return app.go, got %+v", selected)
+	}
+
+	// Clear selection
+	pane.ClearSelection()
+	if len(pane.Selected) != 0 {
+		t.Errorf("expected selection to be cleared")
+	}
+
+	// Pattern selection *.go
+	pane.SelectPattern("*.go")
+	selected = pane.GetSelectedItems()
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 .go items selected, got %d", len(selected))
+	}
+	names := map[string]bool{selected[0].Name: true, selected[1].Name: true}
+	if !names["app.go"] || !names["main.go"] {
+		t.Errorf("expected app.go and main.go to be selected, got %+v", selected)
+	}
+}

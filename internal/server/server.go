@@ -89,6 +89,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/entries", s.handleListEntries)
 	s.mux.HandleFunc("POST /api/copy", s.handleCopy)
 	s.mux.HandleFunc("POST /api/move", s.handleMove)
+	s.mux.HandleFunc("POST /api/rename", s.handleRename)
 	s.mux.HandleFunc("POST /api/mkdir", s.handleMkdir)
 	s.mux.HandleFunc("POST /api/delete", s.handleDelete)
 }
@@ -279,6 +280,27 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	dst := buildFullPath(req.DstRemote, req.DstPath)
 
 	if err := s.engine.Move(r.Context(), src, dst); err != nil {
+		renderError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	renderJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type renameRequest struct {
+	Remote  string `json:"remote"`
+	OldPath string `json:"oldPath"`
+	NewPath string `json:"newPath"`
+}
+
+func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+	var req renameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		renderError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := s.engine.Rename(r.Context(), req.Remote, req.OldPath, req.NewPath); err != nil {
 		renderError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -55,6 +55,10 @@ func (m *mockStorageEngine) Move(ctx context.Context, src, dst string) error {
 	return nil
 }
 
+func (m *mockStorageEngine) Rename(ctx context.Context, remote, oldPath, newPath string) error {
+	return nil
+}
+
 func (m *mockStorageEngine) Delete(ctx context.Context, path string) error {
 	return nil
 }

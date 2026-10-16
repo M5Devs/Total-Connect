@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	tcconfig "github.com/M5Devs/Total-Connect/internal/config"
 	"github.com/M5Devs/Total-Connect/internal/core"
 	"github.com/M5Devs/Total-Connect/internal/models"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -20,6 +22,10 @@ const (
 	ModalMkdir
 	ModalConfirmDelete
 	ModalHelp
+	ModalRename
+	ModalPatternSelect
+	ModalAddBookmark
+	ModalBookmarks
 )
 
 // Messages for async operations
@@ -59,10 +65,18 @@ type AppModel struct {
 	ActiveModal ModalType
 	TextInput   textinput.Model // For mkdir prompt
 
+	RenameInput   textinput.Model
+	PatternInput  textinput.Model
+	BookmarkInput textinput.Model
+
+	BookmarksList  []tcconfig.Bookmark
+	BookmarkCursor int
+
+	PendingRenameItem string
+	PendingDeletePath string
+
 	Width  int
 	Height int
-
-	PendingDeletePath string
 }
 
 func NewAppModel(engine core.StorageEngine) AppModel {
@@ -74,6 +88,21 @@ func NewAppModel(engine core.StorageEngine) AppModel {
 	ti.CharLimit = 156
 	ti.Width = 30
 
+	ri := textinput.New()
+	ri.Placeholder = "New name..."
+	ri.CharLimit = 156
+	ri.Width = 30
+
+	pi := textinput.New()
+	pi.Placeholder = "Pattern (e.g. *.png, *.go)..."
+	pi.CharLimit = 156
+	pi.Width = 30
+
+	bi := textinput.New()
+	bi.Placeholder = "Bookmark name..."
+	bi.CharLimit = 156
+	bi.Width = 30
+
 	left := NewPaneModel("left", ".")
 	left.IsActive = true
 
@@ -81,16 +110,19 @@ func NewAppModel(engine core.StorageEngine) AppModel {
 	right.IsActive = false
 
 	return AppModel{
-		engine:       engine,
-		styles:       DefaultStyles(),
-		LeftPane:     left,
-		RightPane:    right,
-		ActiveID:     "left",
-		StatusBar:    NewStatusBarModel(),
-		RemotePicker: NewRemotePickerModel(),
-		Spinner:      s,
-		ActiveModal:  ModalNone,
-		TextInput:    ti,
+		engine:        engine,
+		styles:        DefaultStyles(),
+		LeftPane:      left,
+		RightPane:     right,
+		ActiveID:      "left",
+		StatusBar:     NewStatusBarModel(),
+		RemotePicker:  NewRemotePickerModel(),
+		Spinner:       s,
+		ActiveModal:   ModalNone,
+		TextInput:     ti,
+		RenameInput:   ri,
+		PatternInput:  pi,
+		BookmarkInput: bi,
 	}
 }
 
@@ -157,6 +189,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.StatusBar.SetMessage(fmt.Sprintf("%s completed successfully", msg.Op), false)
 		}
+		// Clear pane selections after batch operations
+		m.LeftPane.ClearSelection()
+		m.RightPane.ClearSelection()
+
 		// Refresh both panes after any file op
 		m.LeftPane.IsLoading = true
 		m.RightPane.IsLoading = true
@@ -202,6 +238,40 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.getActivePane().PageDown()
 
+		case " ":
+			m.getActivePane().ToggleSelection()
+
+		case "+":
+			m.PatternInput.Reset()
+			m.PatternInput.Focus()
+			m.ActiveModal = ModalPatternSelect
+
+		case "f2", "e":
+			active := m.getActivePane()
+			item := active.SelectedItem()
+			if item != nil && item.Name != ".." {
+				m.PendingRenameItem = item.Name
+				m.RenameInput.SetValue(item.Name)
+				m.RenameInput.Focus()
+				m.ActiveModal = ModalRename
+			}
+
+		case "ctrl+b":
+			active := m.getActivePane()
+			m.BookmarkInput.SetValue(fmt.Sprintf("%s (%s)", getRemoteFromPath(active.Path), active.Path))
+			m.BookmarkInput.Focus()
+			m.ActiveModal = ModalAddBookmark
+
+		case "b":
+			bms, err := tcconfig.LoadBookmarks()
+			if err != nil {
+				m.StatusBar.SetMessage(fmt.Sprintf("Failed to load bookmarks: %v", err), true)
+			} else {
+				m.BookmarksList = bms
+				m.BookmarkCursor = 0
+				m.ActiveModal = ModalBookmarks
+			}
+
 		case "enter":
 			active := m.getActivePane()
 			item := active.SelectedItem()
@@ -231,23 +301,19 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "f5", "c":
 			active := m.getActivePane()
 			inactive := m.getInactivePane()
-			item := active.SelectedItem()
-			if item != nil && item.Name != ".." {
-				src := JoinPath(active.Path, item.Name)
-				dst := JoinPath(inactive.Path, item.Name)
-				m.StatusBar.SetMessage(fmt.Sprintf("Copying %s to %s...", item.Name, inactive.Path), false)
-				cmds = append(cmds, m.copyCmd(src, dst))
+			selected := active.GetSelectedItems()
+			if len(selected) > 0 {
+				m.StatusBar.SetMessage(fmt.Sprintf("Copying %d item(s)...", len(selected)), false)
+				cmds = append(cmds, m.batchCopyCmd(active.Path, inactive.Path, selected))
 			}
 
 		case "f6", "m":
 			active := m.getActivePane()
 			inactive := m.getInactivePane()
-			item := active.SelectedItem()
-			if item != nil && item.Name != ".." {
-				src := JoinPath(active.Path, item.Name)
-				dst := JoinPath(inactive.Path, item.Name)
-				m.StatusBar.SetMessage(fmt.Sprintf("Moving %s to %s...", item.Name, inactive.Path), false)
-				cmds = append(cmds, m.moveCmd(src, dst))
+			selected := active.GetSelectedItems()
+			if len(selected) > 0 {
+				m.StatusBar.SetMessage(fmt.Sprintf("Moving %d item(s)...", len(selected)), false)
+				cmds = append(cmds, m.batchMoveCmd(active.Path, inactive.Path, selected))
 			}
 
 		case "f7", "n":
@@ -257,9 +323,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "f8", "d":
 			active := m.getActivePane()
-			item := active.SelectedItem()
-			if item != nil && item.Name != ".." {
-				m.PendingDeletePath = JoinPath(active.Path, item.Name)
+			selected := active.GetSelectedItems()
+			if len(selected) > 0 {
+				m.PendingDeletePath = fmt.Sprintf("%d item(s)", len(selected))
 				m.ActiveModal = ModalConfirmDelete
 			}
 
@@ -326,14 +392,119 @@ func (m *AppModel) handleModalKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case ModalRename:
+		switch msg.String() {
+		case "esc":
+			m.ActiveModal = ModalNone
+			m.RenameInput.Blur()
+		case "enter":
+			newName := strings.TrimSpace(m.RenameInput.Value())
+			m.ActiveModal = ModalNone
+			m.RenameInput.Blur()
+			if newName != "" && m.PendingRenameItem != "" && newName != m.PendingRenameItem {
+				active := m.getActivePane()
+				oldPath := JoinPath(active.Path, m.PendingRenameItem)
+				newPath := JoinPath(active.Path, newName)
+				remote := getRemoteFromPath(active.Path)
+				m.StatusBar.SetMessage(fmt.Sprintf("Renaming %s to %s...", m.PendingRenameItem, newName), false)
+				return m, m.renameCmd(remote, oldPath, newPath)
+			}
+		default:
+			var cmd tea.Cmd
+			m.RenameInput, cmd = m.RenameInput.Update(msg)
+			return m, cmd
+		}
+
+	case ModalPatternSelect:
+		switch msg.String() {
+		case "esc":
+			m.ActiveModal = ModalNone
+			m.PatternInput.Blur()
+		case "enter":
+			pattern := strings.TrimSpace(m.PatternInput.Value())
+			m.ActiveModal = ModalNone
+			m.PatternInput.Blur()
+			if pattern != "" {
+				m.getActivePane().SelectPattern(pattern)
+			}
+		default:
+			var cmd tea.Cmd
+			m.PatternInput, cmd = m.PatternInput.Update(msg)
+			return m, cmd
+		}
+
+	case ModalAddBookmark:
+		switch msg.String() {
+		case "esc":
+			m.ActiveModal = ModalNone
+			m.BookmarkInput.Blur()
+		case "enter":
+			name := strings.TrimSpace(m.BookmarkInput.Value())
+			m.ActiveModal = ModalNone
+			m.BookmarkInput.Blur()
+			if name != "" {
+				active := m.getActivePane()
+				remote := getRemoteFromPath(active.Path)
+				bm := tcconfig.Bookmark{
+					Name:   name,
+					Remote: remote,
+					Path:   active.Path,
+				}
+				if err := tcconfig.AddBookmark(bm); err != nil {
+					m.StatusBar.SetMessage(fmt.Sprintf("Failed to add bookmark: %v", err), true)
+				} else {
+					m.StatusBar.SetMessage(fmt.Sprintf("Added bookmark %q", name), false)
+				}
+			}
+		default:
+			var cmd tea.Cmd
+			m.BookmarkInput, cmd = m.BookmarkInput.Update(msg)
+			return m, cmd
+		}
+
+	case ModalBookmarks:
+		switch msg.String() {
+		case "esc", "q":
+			m.ActiveModal = ModalNone
+		case "up", "k":
+			if m.BookmarkCursor > 0 {
+				m.BookmarkCursor--
+			}
+		case "down", "j":
+			if m.BookmarkCursor < len(m.BookmarksList)-1 {
+				m.BookmarkCursor++
+			}
+		case "d", "delete":
+			if len(m.BookmarksList) > 0 && m.BookmarkCursor >= 0 && m.BookmarkCursor < len(m.BookmarksList) {
+				toDel := m.BookmarksList[m.BookmarkCursor]
+				_ = tcconfig.DeleteBookmark(toDel.Name)
+				m.BookmarksList, _ = tcconfig.LoadBookmarks()
+				if m.BookmarkCursor >= len(m.BookmarksList) {
+					m.BookmarkCursor = max(0, len(m.BookmarksList)-1)
+				}
+			}
+		case "enter":
+			if len(m.BookmarksList) > 0 && m.BookmarkCursor >= 0 && m.BookmarkCursor < len(m.BookmarksList) {
+				selectedBm := m.BookmarksList[m.BookmarkCursor]
+				m.ActiveModal = ModalNone
+
+				active := m.getActivePane()
+				active.IsLoading = true
+				return m, m.fetchPaneEntries(m.ActiveID, selectedBm.Path)
+			}
+		}
+
 	case ModalConfirmDelete:
 		switch msg.String() {
 		case "y", "Y", "enter":
-			target := m.PendingDeletePath
+			active := m.getActivePane()
+			selected := active.GetSelectedItems()
 			m.PendingDeletePath = ""
 			m.ActiveModal = ModalNone
-			m.StatusBar.SetMessage(fmt.Sprintf("Deleting %s...", target), false)
-			return m, m.deleteCmd(target)
+			if len(selected) > 0 {
+				m.StatusBar.SetMessage(fmt.Sprintf("Deleting %d item(s)...", len(selected)), false)
+				return m, m.batchDeleteCmd(active.Path, selected)
+			}
 		case "n", "N", "esc", "q":
 			m.PendingDeletePath = ""
 			m.ActiveModal = ModalNone
@@ -341,6 +512,13 @@ func (m *AppModel) handleModalKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func getRemoteFromPath(p string) string {
+	if idx := strings.Index(p, ":"); idx != -1 {
+		return p[:idx]
+	}
+	return "local"
 }
 
 func (m *AppModel) getActivePane() *PaneModel {
@@ -399,12 +577,17 @@ func (m *AppModel) View() string {
 				"  Tab         Switch active pane",
 				"  Up/Down/j/k Move cursor up/down",
 				"  PgUp/PgDown Page up/down",
+				"  Space       Toggle item selection",
+				"  +           Select items by pattern (e.g. *.png)",
+				"  F2 / e      Inline rename selected item",
 				"  Enter       Open directory / Enter",
 				"  Backspace   Navigate to parent directory",
-				"  F5 / c      Copy selected item to opposite pane",
-				"  F6 / m      Move selected item to opposite pane",
+				"  F5 / c      Copy selected item(s) to opposite pane",
+				"  F6 / m      Move selected item(s) to opposite pane",
 				"  F7 / n      Create new directory (Mkdir)",
-				"  F8 / d      Delete selected item",
+				"  F8 / d      Delete selected item(s)",
+				"  Ctrl+B      Bookmark current pane remote & path",
+				"  b           Open Bookmarks menu",
 				"  r           Open Storage Remote Picker",
 				"  Ctrl+R      Refresh current pane",
 				"  ?           Toggle Help cheat sheet",
@@ -414,8 +597,10 @@ func (m *AppModel) View() string {
 			)
 			box := m.styles.ModalBox.Render(body)
 			modalContent = centerOverlay(box, m.Width, m.Height)
+
 		case ModalRemotePicker:
 			modalContent = m.RemotePicker.View(m.styles, m.Width, m.Height)
+
 		case ModalMkdir:
 			body := lipgloss.JoinVertical(lipgloss.Left,
 				m.styles.ModalTitle.Render("Create New Directory"),
@@ -425,10 +610,66 @@ func (m *AppModel) View() string {
 			)
 			box := m.styles.ModalBox.Render(body)
 			modalContent = centerOverlay(box, m.Width, m.Height)
+
+		case ModalRename:
+			body := lipgloss.JoinVertical(lipgloss.Left,
+				m.styles.ModalTitle.Render("In-Place Rename"),
+				m.RenameInput.View(),
+				"",
+				m.styles.StatusText.Render("[Enter] Rename  [Esc] Cancel"),
+			)
+			box := m.styles.ModalBox.Render(body)
+			modalContent = centerOverlay(box, m.Width, m.Height)
+
+		case ModalPatternSelect:
+			body := lipgloss.JoinVertical(lipgloss.Left,
+				m.styles.ModalTitle.Render("Select Files by Pattern"),
+				m.PatternInput.View(),
+				"",
+				m.styles.StatusText.Render("[Enter] Select  [Esc] Cancel"),
+			)
+			box := m.styles.ModalBox.Render(body)
+			modalContent = centerOverlay(box, m.Width, m.Height)
+
+		case ModalAddBookmark:
+			body := lipgloss.JoinVertical(lipgloss.Left,
+				m.styles.ModalTitle.Render("Add Bookmark"),
+				m.BookmarkInput.View(),
+				"",
+				m.styles.StatusText.Render("[Enter] Save Bookmark  [Esc] Cancel"),
+			)
+			box := m.styles.ModalBox.Render(body)
+			modalContent = centerOverlay(box, m.Width, m.Height)
+
+		case ModalBookmarks:
+			var lines []string
+			lines = append(lines, m.styles.ModalTitle.Render("⭐ Quick Bookmarks / Favorites"))
+			lines = append(lines, "")
+
+			if len(m.BookmarksList) == 0 {
+				lines = append(lines, " (No saved bookmarks. Press Ctrl+B to add one)")
+			} else {
+				for i, bm := range m.BookmarksList {
+					row := fmt.Sprintf(" %-20s -> %s ", bm.Name, bm.Path)
+					if i == m.BookmarkCursor {
+						lines = append(lines, m.styles.ModalSelected.Render(row))
+					} else {
+						lines = append(lines, m.styles.ModalItem.Render(row))
+					}
+				}
+			}
+
+			lines = append(lines, "")
+			lines = append(lines, m.styles.StatusText.Render("[Enter] Jump  [d] Delete  [Esc] Close"))
+
+			body := lipgloss.JoinVertical(lipgloss.Left, lines...)
+			box := m.styles.ModalBox.Render(body)
+			modalContent = centerOverlay(box, m.Width, m.Height)
+
 		case ModalConfirmDelete:
 			body := lipgloss.JoinVertical(lipgloss.Left,
 				m.styles.ModalTitle.Render("Confirm Delete"),
-				fmt.Sprintf("Are you sure you want to delete?\n%s", m.PendingDeletePath),
+				fmt.Sprintf("Are you sure you want to delete %s?", m.PendingDeletePath),
 				"",
 				m.styles.StatusText.Render("[Y/Enter] Yes  [N/Esc] No"),
 			)
@@ -470,38 +711,87 @@ func (m *AppModel) fetchRemotesCmd() tea.Cmd {
 	}
 }
 
-func (m *AppModel) copyCmd(src, dst string) tea.Cmd {
-	ch := make(chan tea.Msg, 10)
+func (m *AppModel) batchCopyCmd(srcDir, dstDir string, items []models.FileItem) tea.Cmd {
+	ch := make(chan tea.Msg, 20)
 	go func() {
 		defer close(ch)
 		progressHandler := func(p models.Progress) {
 			ch <- ProgressMsg(p)
 		}
 		ctx := core.WithProgressHandler(context.Background(), progressHandler)
-		err := m.engine.Copy(ctx, src, dst)
+
+		var lastErr error
+		for _, item := range items {
+			srcPath := JoinPath(srcDir, item.Name)
+			dstPath := JoinPath(dstDir, item.Name)
+			if err := m.engine.Copy(ctx, srcPath, dstPath); err != nil {
+				lastErr = err
+				break
+			}
+		}
+
 		ch <- OperationCompleteMsg{
-			Op:  fmt.Sprintf("Copy (%s -> %s)", src, dst),
-			Err: err,
+			Op:  fmt.Sprintf("Batch Copy (%d items)", len(items)),
+			Err: lastErr,
 		}
 	}()
 	return waitForProgress(ch)
 }
 
-func (m *AppModel) moveCmd(src, dst string) tea.Cmd {
-	ch := make(chan tea.Msg, 10)
+func (m *AppModel) batchMoveCmd(srcDir, dstDir string, items []models.FileItem) tea.Cmd {
+	ch := make(chan tea.Msg, 20)
 	go func() {
 		defer close(ch)
 		progressHandler := func(p models.Progress) {
 			ch <- ProgressMsg(p)
 		}
 		ctx := core.WithProgressHandler(context.Background(), progressHandler)
-		err := m.engine.Move(ctx, src, dst)
+
+		var lastErr error
+		for _, item := range items {
+			srcPath := JoinPath(srcDir, item.Name)
+			dstPath := JoinPath(dstDir, item.Name)
+			if err := m.engine.Move(ctx, srcPath, dstPath); err != nil {
+				lastErr = err
+				break
+			}
+		}
+
 		ch <- OperationCompleteMsg{
-			Op:  fmt.Sprintf("Move (%s -> %s)", src, dst),
-			Err: err,
+			Op:  fmt.Sprintf("Batch Move (%d items)", len(items)),
+			Err: lastErr,
 		}
 	}()
 	return waitForProgress(ch)
+}
+
+func (m *AppModel) batchDeleteCmd(dir string, items []models.FileItem) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		var lastErr error
+		for _, item := range items {
+			itemPath := JoinPath(dir, item.Name)
+			if err := m.engine.Delete(ctx, itemPath); err != nil {
+				lastErr = err
+				break
+			}
+		}
+		return OperationCompleteMsg{
+			Op:  fmt.Sprintf("Batch Delete (%d items)", len(items)),
+			Err: lastErr,
+		}
+	}
+}
+
+func (m *AppModel) renameCmd(remote, oldPath, newPath string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		err := m.engine.Rename(ctx, remote, oldPath, newPath)
+		return OperationCompleteMsg{
+			Op:  fmt.Sprintf("Rename (%s -> %s)", oldPath, newPath),
+			Err: err,
+		}
+	}
 }
 
 func (m *AppModel) mkdirCmd(path string) tea.Cmd {
@@ -510,17 +800,6 @@ func (m *AppModel) mkdirCmd(path string) tea.Cmd {
 		err := m.engine.Mkdir(ctx, path)
 		return OperationCompleteMsg{
 			Op:  fmt.Sprintf("Mkdir (%s)", path),
-			Err: err,
-		}
-	}
-}
-
-func (m *AppModel) deleteCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		err := m.engine.Delete(ctx, path)
-		return OperationCompleteMsg{
-			Op:  fmt.Sprintf("Delete (%s)", path),
 			Err: err,
 		}
 	}

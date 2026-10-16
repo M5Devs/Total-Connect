@@ -333,3 +333,35 @@ func TestRcloneEngineBareFilenameCopy(t *testing.T) {
 		t.Errorf("expected moved file to exist at %s", moveDst)
 	}
 }
+
+func TestRcloneEngineRename(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "rclone.conf")
+
+	engine, err := NewRcloneEngine(cfgPath)
+	if err != nil {
+		t.Fatalf("failed to create RcloneEngine: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Create test file
+	oldFile := filepath.Join(tmpDir, "oldname.txt")
+	err = os.WriteFile(oldFile, []byte("rename test"), 0644)
+	if err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	newFile := filepath.Join(tmpDir, "newname.txt")
+	err = engine.Rename(ctx, "local", oldFile, newFile)
+	if err != nil {
+		t.Fatalf("Rename failed: %v", err)
+	}
+
+	if _, err := os.Stat(oldFile); !os.IsNotExist(err) {
+		t.Errorf("expected oldFile to not exist")
+	}
+	if _, err := os.Stat(newFile); os.IsNotExist(err) {
+		t.Errorf("expected newFile to exist")
+	}
+}

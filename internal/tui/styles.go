@@ -3,25 +3,26 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 type Styles struct {
-	ActiveBorder   lipgloss.Style
-	InactiveBorder lipgloss.Style
-	Title          lipgloss.Style
-	ActiveTitle    lipgloss.Style
-	InactiveTitle  lipgloss.Style
-	Header         lipgloss.Style
-	SelectedRow    lipgloss.Style
-	NormalRow      lipgloss.Style
-	DirItem        lipgloss.Style
-	FileItem       lipgloss.Style
-	StatusBar      lipgloss.Style
-	StatusKey      lipgloss.Style
-	StatusDesc     lipgloss.Style
-	StatusText     lipgloss.Style
-	StatusError    lipgloss.Style
-	ModalBox       lipgloss.Style
-	ModalTitle     lipgloss.Style
-	ModalItem      lipgloss.Style
-	ModalSelected  lipgloss.Style
+	ActiveBorder     lipgloss.Style
+	InactiveBorder   lipgloss.Style
+	Title            lipgloss.Style
+	ActiveTitle      lipgloss.Style
+	InactiveTitle    lipgloss.Style
+	Header           lipgloss.Style
+	SelectedRow      lipgloss.Style
+	MultiSelectedRow lipgloss.Style
+	NormalRow        lipgloss.Style
+	DirItem          lipgloss.Style
+	FileItem         lipgloss.Style
+	StatusBar        lipgloss.Style
+	StatusKey        lipgloss.Style
+	StatusDesc       lipgloss.Style
+	StatusText       lipgloss.Style
+	StatusError      lipgloss.Style
+	ModalBox         lipgloss.Style
+	ModalTitle       lipgloss.Style
+	ModalItem        lipgloss.Style
+	ModalSelected    lipgloss.Style
 }
 
 func DefaultStyles() Styles {
@@ -55,6 +56,10 @@ func DefaultStyles() Styles {
 	s.SelectedRow = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("229")).
 		Background(lipgloss.Color("57")).
+		Bold(true)
+
+	s.MultiSelectedRow = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("120")).
 		Bold(true)
 
 	s.NormalRow = lipgloss.NewStyle().

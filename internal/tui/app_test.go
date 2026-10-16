@@ -73,6 +73,10 @@ func (m *mockStorageEngine) Move(ctx context.Context, src, dst string) error {
 	return nil
 }
 
+func (m *mockStorageEngine) Rename(ctx context.Context, remote, oldPath, newPath string) error {
+	return nil
+}
+
 func (m *mockStorageEngine) Delete(ctx context.Context, path string) error {
 	return nil
 }
@@ -221,5 +225,66 @@ func TestAppProgressMsg(t *testing.T) {
 	}
 	if app.StatusBar.Progress.CurrentFile != "test.txt" {
 		t.Errorf("expected current file test.txt, got %q", app.StatusBar.Progress.CurrentFile)
+	}
+}
+
+func TestAppInPlaceRenameModal(t *testing.T) {
+	engine := newMockStorageEngine()
+	app := NewAppModel(engine)
+
+	app.LeftPane.SetItems([]models.FileItem{
+		{Name: "file1.txt", IsDir: false},
+	})
+	app.LeftPane.Cursor = 0
+
+	// Trigger F2 key
+	updatedModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyF2})
+	app = *updatedModel.(*AppModel)
+
+	if app.ActiveModal != ModalRename {
+		t.Fatalf("expected ActiveModal ModalRename, got %v", app.ActiveModal)
+	}
+	if app.RenameInput.Value() != "file1.txt" {
+		t.Errorf("expected RenameInput value file1.txt, got %q", app.RenameInput.Value())
+	}
+
+	// Press Esc to cancel
+	updatedModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	app = *updatedModel.(*AppModel)
+
+	if app.ActiveModal != ModalNone {
+		t.Errorf("expected ActiveModal ModalNone after Esc, got %v", app.ActiveModal)
+	}
+}
+
+func TestAppPatternSelectModal(t *testing.T) {
+	engine := newMockStorageEngine()
+	app := NewAppModel(engine)
+
+	app.LeftPane.SetItems([]models.FileItem{
+		{Name: "file1.txt", IsDir: false},
+		{Name: "file2.go", IsDir: false},
+	})
+
+	// Press '+' key
+	updatedModel, _ := app.Update(tea.KeyMsg{Runes: []rune{'+'}, Type: tea.KeyRunes})
+	app = *updatedModel.(*AppModel)
+
+	if app.ActiveModal != ModalPatternSelect {
+		t.Fatalf("expected ActiveModal ModalPatternSelect, got %v", app.ActiveModal)
+	}
+
+	// Type "*.go" and Enter
+	app.PatternInput.SetValue("*.go")
+	updatedModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app = *updatedModel.(*AppModel)
+
+	if app.ActiveModal != ModalNone {
+		t.Errorf("expected ActiveModal ModalNone, got %v", app.ActiveModal)
+	}
+
+	selected := app.LeftPane.GetSelectedItems()
+	if len(selected) != 1 || selected[0].Name != "file2.go" {
+		t.Errorf("expected file2.go to be selected by pattern, got %+v", selected)
 	}
 }
