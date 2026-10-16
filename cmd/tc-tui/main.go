@@ -19,7 +19,7 @@ func main() {
 	}
 
 	appModel := tui.NewAppModel(engine)
-	p := tea.NewProgram(appModel, tea.WithAltScreen())
+	p := tea.NewProgram(&appModel, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI application: %v\n", err)

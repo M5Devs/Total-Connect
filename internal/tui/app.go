@@ -42,6 +42,8 @@ type RemotesLoadedMsg struct {
 
 type ProgressMsg models.Progress
 
+type ProgressFinishedMsg struct{}
+
 type AppModel struct {
 	engine core.StorageEngine
 	styles Styles
@@ -92,7 +94,7 @@ func NewAppModel(engine core.StorageEngine) AppModel {
 	}
 }
 
-func (m AppModel) Init() tea.Cmd {
+func (m *AppModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.Spinner.Tick,
 		m.fetchPaneEntries("left", m.LeftPane.Path),
@@ -100,7 +102,7 @@ func (m AppModel) Init() tea.Cmd {
 	)
 }
 
-func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -117,6 +119,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProgressMsg:
 		p := models.Progress(msg)
 		m.StatusBar.SetProgress(&p)
+
+	case ProgressFinishedMsg:
+		// Async progress finished, no state mutation required
 
 	case EntriesLoadedMsg:
 		if msg.PaneID == "left" {
@@ -268,7 +273,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m AppModel) handleModalKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *AppModel) handleModalKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.ActiveModal {
 	case ModalHelp:
 		switch msg.String() {
@@ -370,7 +375,7 @@ func (m *AppModel) recalculatePaneSizes() {
 	m.RightPane.Height = paneHeight
 }
 
-func (m AppModel) View() string {
+func (m *AppModel) View() string {
 	if m.Width == 0 || m.Height == 0 {
 		return "Initializing Total Connect TUI..."
 	}
@@ -441,7 +446,7 @@ func (m AppModel) View() string {
 
 // Async StorageEngine Cmds
 
-func (m AppModel) fetchPaneEntries(paneID, targetPath string) tea.Cmd {
+func (m *AppModel) fetchPaneEntries(paneID, targetPath string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		items, err := m.engine.ListEntries(ctx, targetPath)
@@ -454,7 +459,7 @@ func (m AppModel) fetchPaneEntries(paneID, targetPath string) tea.Cmd {
 	}
 }
 
-func (m AppModel) fetchRemotesCmd() tea.Cmd {
+func (m *AppModel) fetchRemotesCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		remotes, err := m.engine.ListRemotes(ctx)
@@ -465,7 +470,7 @@ func (m AppModel) fetchRemotesCmd() tea.Cmd {
 	}
 }
 
-func (m AppModel) copyCmd(src, dst string) tea.Cmd {
+func (m *AppModel) copyCmd(src, dst string) tea.Cmd {
 	ch := make(chan tea.Msg, 10)
 	go func() {
 		defer close(ch)
@@ -482,7 +487,7 @@ func (m AppModel) copyCmd(src, dst string) tea.Cmd {
 	return waitForProgress(ch)
 }
 
-func (m AppModel) moveCmd(src, dst string) tea.Cmd {
+func (m *AppModel) moveCmd(src, dst string) tea.Cmd {
 	ch := make(chan tea.Msg, 10)
 	go func() {
 		defer close(ch)
@@ -499,7 +504,7 @@ func (m AppModel) moveCmd(src, dst string) tea.Cmd {
 	return waitForProgress(ch)
 }
 
-func (m AppModel) mkdirCmd(path string) tea.Cmd {
+func (m *AppModel) mkdirCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		err := m.engine.Mkdir(ctx, path)
@@ -510,7 +515,7 @@ func (m AppModel) mkdirCmd(path string) tea.Cmd {
 	}
 }
 
-func (m AppModel) deleteCmd(path string) tea.Cmd {
+func (m *AppModel) deleteCmd(path string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		err := m.engine.Delete(ctx, path)
@@ -525,7 +530,7 @@ func waitForProgress(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-ch
 		if !ok {
-			return nil
+			return ProgressFinishedMsg{}
 		}
 		return msg
 	}
