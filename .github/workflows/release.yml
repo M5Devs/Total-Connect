@@ -1,0 +1,126 @@
+name: Release Builds
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Windows
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+            archive: zip
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+            archive: zip
+          # Linux
+          - goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+          # macOS
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Build Binaries for ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          DIST_DIR="total-connect_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p "$DIST_DIR"
+
+          # بناء الأدوات الثلاثة
+          go build -ldflags="-s -w" -o "$DIST_DIR/tc-server${{ matrix.ext }}" ./cmd/tc-server
+          go build -ldflags="-s -w" -o "$DIST_DIR/tc-tui${{ matrix.ext }}" ./cmd/tc-tui
+          go build -ldflags="-s -w" -o "$DIST_DIR/tc-cli${{ matrix.ext }}" ./cmd/tc-cli
+
+          # نسخ الرخصة والـ README
+          cp README.md LICENSE "$DIST_DIR/"
+
+          # ضغط الحزمة
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -r "${DIST_DIR}.zip" "$DIST_DIR"
+            echo "ARCHIVE_FILE=${DIST_DIR}.zip" >> $GITHUB_ENV
+          else
+            tar -czvf "${DIST_DIR}.tar.gz" "$DIST_DIR"
+            echo "ARCHIVE_FILE=${DIST_DIR}.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_FILE }}
+          path: ${{ env.ARCHIVE_FILE }}
+
+  publish-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Checksums (SHA256)
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Determine Tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "val=${{ github.event.inputs.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "val=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.val }}
+          files: |
+            release-assets/*
+          generate_release_notes: true
