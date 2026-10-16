@@ -171,6 +171,13 @@ function setupEventListeners() {
       const itemName = row.getAttribute('data-item-name');
       const isDir = row.getAttribute('data-is-dir') === 'true';
 
+      // 3-dots menu button click check
+      if (e.target.closest('[data-action="menu"]') || e.target.matches('.btn-item-menu') || e.target.matches('.card-menu-btn')) {
+        e.stopPropagation();
+        openBottomSheet(paneId, itemName, isDir);
+        return;
+      }
+
       // Checkbox click check
       if (e.target.matches('input[type="checkbox"]')) {
         e.stopPropagation();
@@ -233,6 +240,7 @@ function setupEventListeners() {
   });
   document.getElementById('sheet-btn-copy')?.addEventListener('click', handleSheetCopy);
   document.getElementById('sheet-btn-move')?.addEventListener('click', handleSheetMove);
+  document.getElementById('sheet-btn-rename')?.addEventListener('click', handleSheetRename);
   document.getElementById('sheet-btn-delete')?.addEventListener('click', handleSheetDelete);
   document.getElementById('sheet-btn-details')?.addEventListener('click', handleSheetDetails);
 
@@ -596,6 +604,7 @@ function renderPaneList(paneId) {
             <div class="card-check">
               <input type="checkbox" ${isSelected ? 'checked' : ''}>
             </div>
+            <button class="card-menu-btn" title="Actions" data-action="menu">⋮</button>
             <div class="card-icon">${icon}</div>
             <div class="card-name ${item.is_dir ? 'is-dir' : ''}">${escapeHtml(item.name)}</div>
             <div class="card-meta">${sizeStr}</div>
@@ -613,6 +622,9 @@ function renderPaneList(paneId) {
             </span>
             <span class="col-size">${sizeStr}</span>
             <span class="col-mtime">${mtimeStr}</span>
+            <span class="col-actions">
+              <button class="btn-item-menu" title="Actions" data-action="menu">⋮</button>
+            </span>
           </div>
         `;
       }
@@ -625,6 +637,8 @@ function renderPaneList(paneId) {
     const selCount = pane.selected.size;
     footer.innerText = `${visibleItems.length} items ${selCount > 0 ? `(${selCount} selected)` : ''}`;
   }
+
+  attachItemTouchListeners(paneId, container);
 }
 
 // Settings Modal Logic
@@ -1528,6 +1542,7 @@ function onTouchStart(e, paneId, el) {
   longPressTimer = setTimeout(() => {
     // Long-press triggered!
     if (navigator.vibrate) navigator.vibrate(40);
+    toggleItemSelect(paneId, itemName, true);
     openBottomSheet(paneId, itemName, isDir);
   }, 500);
 }
@@ -1789,4 +1804,38 @@ function setupTabHeaderSwipe() {
     headerStartX = 0;
     headerStartY = 0;
   });
+}
+
+
+async function handleSheetRename() {
+  if (!state.activeSheetItem) return;
+  const { paneId, name } = state.activeSheetItem;
+  const pane = state.panes[paneId];
+  closeBottomSheet();
+
+  const newName = prompt(`Rename "${name}" to:`, name);
+  if (!newName || newName.trim() === '' || newName.trim() === name) return;
+
+  const cleanNewName = newName.trim();
+  const srcPath = joinPath(pane.path, name);
+  const dstPath = joinPath(pane.path, cleanNewName);
+
+  showToast(`Renaming "${name}" to "${cleanNewName}"...`, 'info');
+
+  try {
+    await apiCall('api/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        srcRemote: pane.remote,
+        srcPath: srcPath,
+        dstRemote: pane.remote,
+        dstPath: dstPath
+      })
+    });
+    showToast(`Renamed to "${cleanNewName}"`, 'success');
+    loadPane(paneId);
+  } catch (err) {
+    showToast(`Failed to rename: ${err.message}`, 'error');
+  }
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -70,7 +71,7 @@ func (r *RcloneEngine) ListEntries(ctx context.Context, remotePath string) ([]mo
 	var items []models.FileItem
 	for _, entry := range entries {
 		item := models.FileItem{
-			Name:    entry.Remote(),
+			Name:    path.Base(entry.Remote()),
 			Path:    fspath.JoinRootPath(remotePath, entry.Remote()),
 			Size:    entry.Size(),
 			ModTime: entry.ModTime(ctx),
@@ -91,6 +92,9 @@ func (r *RcloneEngine) ListEntries(ctx context.Context, remotePath string) ([]mo
 // If the extracted filesystem component is empty (e.g. for bare filenames like "README.md"),
 // it normalizes it to ".". If it's a remote root (e.g. "remote:"), it preserves it.
 func splitFsAndRemote(p string) (string, string, error) {
+	if p == "" {
+		p = "."
+	}
 	fsPath, remote, err := fspath.Split(p)
 	if err != nil {
 		return "", "", err
@@ -113,7 +117,7 @@ func resolveDstFsAndRemote(ctx context.Context, dst string, srcRemote string) (f
 	}
 
 	if dstRemote == "" {
-		return fdst, filepath.Base(srcRemote), nil
+		return fdst, path.Base(srcRemote), nil
 	}
 
 	// Check if dstRemote is a directory on fdst
@@ -121,7 +125,7 @@ func resolveDstFsAndRemote(ctx context.Context, dst string, srcRemote string) (f
 		// Check if dst is a directory by listing or checking fs
 		if _, errList := fdst.List(ctx, dstRemote); errList == nil {
 			// dstRemote is a directory on fdst
-			return fdst, fspath.JoinRootPath(dstRemote, filepath.Base(srcRemote)), nil
+			return fdst, fspath.JoinRootPath(dstRemote, path.Base(srcRemote)), nil
 		}
 	}
 
@@ -130,6 +134,12 @@ func resolveDstFsAndRemote(ctx context.Context, dst string, srcRemote string) (f
 
 // Copy copies a file or directory from src to dst.
 func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
+	if src == "" {
+		src = "."
+	}
+	if dst == "" {
+		dst = "."
+	}
 	srcFs, srcRemote, err := splitFsAndRemote(src)
 	if err != nil {
 		return fmt.Errorf("invalid src path %q: %w", src, err)
@@ -205,6 +215,12 @@ func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
 
 // Move natively moves a file or directory from src to dst.
 func (r *RcloneEngine) Move(ctx context.Context, src, dst string) error {
+	if src == "" {
+		src = "."
+	}
+	if dst == "" {
+		dst = "."
+	}
 	srcFs, srcRemote, err := splitFsAndRemote(src)
 	if err != nil {
 		return fmt.Errorf("invalid src path %q: %w", src, err)
