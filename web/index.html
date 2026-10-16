@@ -15,6 +15,9 @@
         <span class="logo-text">TOTAL CONNECT</span>
       </div>
       <div class="header-right">
+        <button class="icon-btn-text" id="btn-bookmarks" title="Bookmarks / Quick Jump">
+          ⭐ <span class="btn-label">Bookmarks</span>
+        </button>
         <button class="icon-btn-text" id="btn-view-toggle" title="Toggle List/Grid View">
           <span id="view-toggle-icon">🔲</span> <span class="btn-label" id="view-toggle-label">Grid</span>
         </button>
@@ -190,6 +193,36 @@
         </div>
         <div class="modal-actions" style="margin-top: 15px;">
           <button class="action-btn secondary" id="btn-close-details-ack">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bookmarks Modal -->
+    <div id="bookmarks-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="wizard-header">
+          <h3>⭐ Quick Bookmarks / Favorites</h3>
+          <button class="modal-close-btn" id="btn-close-bookmarks" aria-label="Close">✕</button>
+        </div>
+        <div class="bookmarks-list-container" id="bookmarks-list-body" style="max-height: 250px; overflow-y: auto;">
+          <!-- Rendered dynamically -->
+        </div>
+        <div class="modal-actions" style="margin-top: 15px; justify-content: space-between;">
+          <button class="action-btn primary" id="btn-add-bookmark">➕ Bookmark Current Path</button>
+          <button class="action-btn secondary" id="btn-close-bookmarks-ack">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rename Modal -->
+    <div id="rename-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <h3>Rename Item</h3>
+        <p id="rename-target-info">Renaming item:</p>
+        <input type="text" id="rename-input" class="modal-input" placeholder="New item name">
+        <div class="modal-actions">
+          <button class="action-btn primary" id="btn-confirm-rename">Rename</button>
+          <button class="action-btn secondary" id="btn-cancel-rename">Cancel</button>
         </div>
       </div>
     </div>

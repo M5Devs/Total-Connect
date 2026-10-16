@@ -5,17 +5,22 @@ import (
 	"strings"
 
 	"github.com/M5Devs/Total-Connect/internal/models"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/lipgloss"
 )
 
 type StatusBarModel struct {
-	Message  string
-	IsError  bool
-	Progress *models.Progress
+	Message     string
+	IsError     bool
+	Progress    *models.Progress
+	ProgressBar progress.Model
 }
 
 func NewStatusBarModel() StatusBarModel {
-	return StatusBarModel{}
+	p := progress.New(progress.WithDefaultGradient())
+	return StatusBarModel{
+		ProgressBar: p,
+	}
 }
 
 func (s *StatusBarModel) SetMessage(msg string, isError bool) {
@@ -36,14 +41,14 @@ func (s StatusBarModel) View(styles Styles, width int) string {
 		key  string
 		desc string
 	}{
+		{"F2", "Rename"},
 		{"F5", "Copy"},
 		{"F6", "Move"},
 		{"F7", "Mkdir"},
 		{"F8", "Delete"},
-		{"r", "Remote"},
+		{"^B", "Bkmark"},
+		{"b", "Jump"},
 		{"?", "Help"},
-		{"Tab", "Switch"},
-		{"q", "Quit"},
 	}
 
 	var fnBars []string
@@ -57,22 +62,29 @@ func (s StatusBarModel) View(styles Styles, width int) string {
 
 	msgRow := ""
 	if s.Progress != nil {
-		pct := s.Progress.Percentage
-		if pct > 100 {
-			pct = 100
+		pct := s.Progress.Percentage / 100.0
+		if pct > 1.0 {
+			pct = 1.0
+		} else if pct < 0.0 {
+			pct = 0.0
 		}
 		file := s.Progress.CurrentFile
 		if file == "" {
 			file = "file"
 		}
 
-		var progStr string
-		if s.Progress.TotalBytes > 0 {
-			progStr = fmt.Sprintf("Transferring %s: %.1f%% (%s / %s)", file, pct, formatSize(s.Progress.BytesTransferred), formatSize(s.Progress.TotalBytes))
-		} else {
-			progStr = fmt.Sprintf("Transferring %s... (%.1f%%)", file, pct)
+		s.ProgressBar.Width = width - len(file) - 30
+		if s.ProgressBar.Width < 10 {
+			s.ProgressBar.Width = 10
 		}
-		msgRow = styles.StatusText.Render(progStr)
+
+		barView := s.ProgressBar.ViewAs(pct)
+		if s.Progress.TotalBytes > 0 {
+			msgRow = fmt.Sprintf("Copying %s %s %s / %s", file, barView, formatSize(s.Progress.BytesTransferred), formatSize(s.Progress.TotalBytes))
+		} else {
+			msgRow = fmt.Sprintf("Copying %s %s", file, barView)
+		}
+		msgRow = styles.StatusText.Render(msgRow)
 	} else if s.Message != "" {
 		if s.IsError {
 			msgRow = styles.StatusError.Render("ERROR: " + s.Message)

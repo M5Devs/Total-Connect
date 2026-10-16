@@ -47,6 +47,9 @@ type StorageEngine interface {
 	// Move moves a file or directory from src path to dst path natively.
 	Move(ctx context.Context, src, dst string) error
 
+	// Rename renames a file or directory on a given remote from oldPath to newPath.
+	Rename(ctx context.Context, remote, oldPath, newPath string) error
+
 	// Delete removes a file or directory at the given path.
 	Delete(ctx context.Context, path string) error
 

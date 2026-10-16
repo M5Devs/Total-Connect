@@ -132,6 +132,21 @@ func resolveDstFsAndRemote(ctx context.Context, dst string, srcRemote string) (f
 	return fdst, dstRemote, nil
 }
 
+func buildFullPath(remote, pathStr string) string {
+	if remote == "" || remote == "local" {
+		if pathStr == "" {
+			return "."
+		}
+		return pathStr
+	}
+
+	r := strings.TrimSuffix(remote, ":") + ":"
+	if pathStr == "" || pathStr == "." {
+		return r
+	}
+	return r + strings.TrimPrefix(pathStr, "/")
+}
+
 // Copy copies a file or directory from src to dst.
 func (r *RcloneEngine) Copy(ctx context.Context, src, dst string) error {
 	if src == "" {
@@ -294,8 +309,18 @@ func (r *RcloneEngine) Move(ctx context.Context, src, dst string) error {
 	return err
 }
 
+// Rename renames a file or directory on a given remote from oldPath to newPath.
+func (r *RcloneEngine) Rename(ctx context.Context, remote, oldPath, newPath string) error {
+	fullOld := buildFullPath(remote, oldPath)
+	fullNew := buildFullPath(remote, newPath)
+	return r.Move(ctx, fullOld, fullNew)
+}
+
 // Delete removes a file or directory at the given path.
 func (r *RcloneEngine) Delete(ctx context.Context, path string) error {
+	if path == "" {
+		path = "."
+	}
 	fsPath, remote, err := splitFsAndRemote(path)
 	if err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)
@@ -316,6 +341,9 @@ func (r *RcloneEngine) Delete(ctx context.Context, path string) error {
 
 // Mkdir creates a directory at the given path.
 func (r *RcloneEngine) Mkdir(ctx context.Context, path string) error {
+	if path == "" {
+		path = "."
+	}
 	fsPath, remote, err := splitFsAndRemote(path)
 	if err != nil {
 		return fmt.Errorf("invalid path %q: %w", path, err)

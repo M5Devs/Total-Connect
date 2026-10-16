@@ -2,6 +2,7 @@
 
 const state = {
   activeSheetItem: null, // { paneId, name, isDir, item }
+  activeRenameItem: null, // { paneId, name, remote, path }
   activePane: 'left',
   remotes: [],
   isEditingRemote: false,
@@ -47,7 +48,7 @@ async function initApp() {
   initWizard();
 }
 
-// LocalStorage Settings Management
+// LocalStorage Settings & Bookmarks Management
 function loadSettingsFromStorage() {
   try {
     const saved = localStorage.getItem('tc_settings');
@@ -76,9 +77,30 @@ function saveSettingsToStorage() {
   }
 }
 
+function loadBookmarksFromStorage() {
+  try {
+    const saved = localStorage.getItem('tc_bookmarks');
+    if (saved) {
+      return JSON.parse(saved) || [];
+    }
+  } catch (err) {
+    console.error('Failed to load bookmarks:', err);
+  }
+  return [];
+}
+
+function saveBookmarksToStorage(bookmarks) {
+  try {
+    localStorage.setItem('tc_bookmarks', JSON.stringify(bookmarks));
+  } catch (err) {
+    console.error('Failed to save bookmarks:', err);
+  }
+}
+
 // Event Delegation & Event Listeners (XSS Hardened)
 function setupEventListeners() {
   // Global Header Actions
+  document.getElementById('btn-bookmarks')?.addEventListener('click', openBookmarksModal);
   document.getElementById('btn-view-toggle')?.addEventListener('click', toggleHeaderViewMode);
   document.getElementById('btn-settings')?.addEventListener('click', openSettingsModal);
   document.getElementById('btn-add-conn')?.addEventListener('click', openWizardModal);
@@ -87,6 +109,16 @@ function setupEventListeners() {
   document.getElementById('btn-close-settings')?.addEventListener('click', () => closeModal('settings-modal'));
   document.getElementById('btn-cancel-settings')?.addEventListener('click', () => closeModal('settings-modal'));
   document.getElementById('btn-save-settings')?.addEventListener('click', saveSettingsFromModal);
+
+  // Bookmarks Modal Buttons
+  document.getElementById('btn-close-bookmarks')?.addEventListener('click', () => closeModal('bookmarks-modal'));
+  document.getElementById('btn-close-bookmarks-ack')?.addEventListener('click', () => closeModal('bookmarks-modal'));
+  document.getElementById('btn-add-bookmark')?.addEventListener('click', addBookmarkCurrentPath);
+  document.getElementById('bookmarks-list-body')?.addEventListener('click', handleBookmarkAction);
+
+  // Rename Modal Buttons
+  document.getElementById('btn-confirm-rename')?.addEventListener('click', confirmRename);
+  document.getElementById('btn-cancel-rename')?.addEventListener('click', () => closeModal('rename-modal'));
 
   // Mobile Tabs
   document.getElementById('mobile-tabs')?.addEventListener('click', (e) => {
@@ -514,7 +546,7 @@ function navigateToPath(paneId, remote, targetPath) {
   loadPane(paneId);
 }
 
-// File Extension Icon Helper (Microsoft Files / Fluent Icons)
+// File Extension Icon Helper
 function getFileTypeIcon(item) {
   if (item.is_dir) return '📁';
 
@@ -639,6 +671,82 @@ function renderPaneList(paneId) {
   }
 
   attachItemTouchListeners(paneId, container);
+}
+
+// Bookmarks Modal Logic
+function openBookmarksModal() {
+  renderBookmarksList();
+  document.getElementById('bookmarks-modal')?.classList.remove('hidden');
+}
+
+function renderBookmarksList() {
+  const container = document.getElementById('bookmarks-list-body');
+  if (!container) return;
+
+  const bookmarks = loadBookmarksFromStorage();
+  if (bookmarks.length === 0) {
+    container.innerHTML = `<div style="padding:16px; color: var(--text-muted); text-align:center;">No saved bookmarks yet.</div>`;
+    return;
+  }
+
+  let html = '';
+  bookmarks.forEach((bm, idx) => {
+    html += `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:8px; border-bottom:1px solid rgba(255,255,255,0.1);">
+        <div style="cursor:pointer; flex:1;" data-bm-action="jump" data-bm-idx="${idx}">
+          <strong style="color: var(--accent-cyan);">${escapeHtml(bm.name)}</strong>
+          <div style="font-size:11px; color: var(--text-muted);">${escapeHtml(bm.remote)} &bull; ${escapeHtml(bm.path)}</div>
+        </div>
+        <button class="action-btn danger" style="padding:4px 8px; font-size:0.8rem; height:28px;" data-bm-action="delete" data-bm-idx="${idx}">🗑️</button>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function handleBookmarkAction(e) {
+  const jumpTarget = e.target.closest('[data-bm-action="jump"]');
+  const deleteBtn = e.target.closest('[data-bm-action="delete"]');
+
+  if (jumpTarget) {
+    const idx = parseInt(jumpTarget.getAttribute('data-bm-idx'), 10);
+    const bookmarks = loadBookmarksFromStorage();
+    if (bookmarks[idx]) {
+      const bm = bookmarks[idx];
+      closeModal('bookmarks-modal');
+      navigateToPath(state.activePane, bm.remote, bm.path);
+      showToast(`Jumped to bookmark: ${bm.name}`, 'info');
+    }
+  } else if (deleteBtn) {
+    const idx = parseInt(deleteBtn.getAttribute('data-bm-idx'), 10);
+    const bookmarks = loadBookmarksFromStorage();
+    if (bookmarks[idx]) {
+      const removed = bookmarks.splice(idx, 1);
+      saveBookmarksToStorage(bookmarks);
+      renderBookmarksList();
+      showToast(`Removed bookmark "${removed[0].name}"`, 'info');
+    }
+  }
+}
+
+function addBookmarkCurrentPath() {
+  const pane = state.panes[state.activePane];
+  const defaultName = `${pane.remote} (${pane.path})`;
+  const name = prompt('Bookmark Name:', defaultName);
+
+  if (!name || name.trim() === '') return;
+
+  const bookmarks = loadBookmarksFromStorage();
+  bookmarks.push({
+    name: name.trim(),
+    remote: pane.remote,
+    path: pane.path
+  });
+
+  saveBookmarksToStorage(bookmarks);
+  renderBookmarksList();
+  showToast(`Bookmark "${name.trim()}" added`, 'success');
 }
 
 // Settings Modal Logic
@@ -1433,11 +1541,6 @@ function canNavigateUp(currentPath) {
   return true;
 }
 
-// Fixed getParentPath: Handles remote paths with colons correctly
-// e.g., remote:folder/subfolder -> remote:folder
-// e.g., remote:folder -> remote:
-// e.g., folder/subfolder -> folder
-// e.g., folder -> .
 function getParentPath(currentPath) {
   if (!currentPath || currentPath === '.' || currentPath === '/') return '.';
 
@@ -1446,11 +1549,10 @@ function getParentPath(currentPath) {
 
   const colonIdx = currentPath.indexOf(':');
   if (colonIdx !== -1) {
-    remotePrefix = currentPath.slice(0, colonIdx + 1); // "remote:"
-    pathPart = currentPath.slice(colonIdx + 1);       // "folder/subfolder"
+    remotePrefix = currentPath.slice(0, colonIdx + 1);
+    pathPart = currentPath.slice(colonIdx + 1);
   }
 
-  // Trim leading/trailing slashes on pathPart
   pathPart = pathPart.replace(/^\/+|\/+$/g, '');
 
   if (!pathPart) {
@@ -1470,7 +1572,6 @@ function getParentPath(currentPath) {
 function joinPath(base, child) {
   if (!base || base === '.') return child;
 
-  // Handle trailing colon/slash
   if (base.endsWith(':')) {
     return `${base}${child}`;
   }
@@ -1503,9 +1604,7 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-
-/* Mobile Touch Gestures: Horizontal Swipe, Long-Press, and Tab Swipe */
-
+/* Mobile Touch Gestures */
 let longPressTimer = null;
 let touchStartX = 0;
 let touchStartY = 0;
@@ -1516,7 +1615,7 @@ function attachItemTouchListeners(paneId, container) {
   const items = container.querySelectorAll('[data-item-name]');
   items.forEach(el => {
     const itemName = el.getAttribute('data-item-name');
-    if (itemName === '..') return; // Do not apply gesture to parent directory row
+    if (itemName === '..') return;
 
     el.addEventListener('touchstart', (e) => onTouchStart(e, paneId, el), { passive: true });
     el.addEventListener('touchmove', (e) => onTouchMove(e, el), { passive: true });
@@ -1537,10 +1636,8 @@ function onTouchStart(e, paneId, el) {
   const itemName = el.getAttribute('data-item-name');
   const isDir = el.getAttribute('data-is-dir') === 'true';
 
-  // Start long-press timer (~500ms)
   clearTimeout(longPressTimer);
   longPressTimer = setTimeout(() => {
-    // Long-press triggered!
     if (navigator.vibrate) navigator.vibrate(40);
     toggleItemSelect(paneId, itemName, true);
     openBottomSheet(paneId, itemName, isDir);
@@ -1554,15 +1651,12 @@ function onTouchMove(e, el) {
   const deltaX = touch.clientX - touchStartX;
   const deltaY = touch.clientY - touchStartY;
 
-  // If finger moved significantly (> 10px), cancel long press
   if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
     clearTimeout(longPressTimer);
   }
 
-  // Check if movement is horizontal swipe rather than vertical scroll
   if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 15) {
     isSwiping = true;
-    // Visual translation feedback
     el.style.transform = `translateX(${deltaX}px)`;
 
     if (deltaX > 60) {
@@ -1585,7 +1679,6 @@ function onTouchEnd(e, paneId, el) {
   const deltaX = e.changedTouches[0].clientX - touchStartX;
   const deltaY = e.changedTouches[0].clientY - touchStartY;
 
-  // Reset transform & styling
   el.style.transform = '';
   el.classList.remove('swipe-copy', 'swipe-move');
 
@@ -1593,11 +1686,9 @@ function onTouchEnd(e, paneId, el) {
     const itemName = el.getAttribute('data-item-name');
 
     if (deltaX > 60) {
-      // Swipe Right -> Copy item to inactive pane
       if (navigator.vibrate) navigator.vibrate(30);
       triggerSingleItemCopy(paneId, itemName);
     } else if (deltaX < -60) {
-      // Swipe Left -> Move item to inactive pane
       if (navigator.vibrate) navigator.vibrate(30);
       triggerSingleItemMove(paneId, itemName);
     }
@@ -1621,7 +1712,6 @@ function onTouchCancel(e, el) {
   isSwiping = false;
 }
 
-// Single Item Copy/Move Gesture Actions
 async function triggerSingleItemCopy(srcPaneId, itemName) {
   const dstPaneId = srcPaneId === 'left' ? 'right' : 'left';
   const srcPane = state.panes[srcPaneId];
@@ -1772,6 +1862,68 @@ function handleSheetDetails() {
   document.getElementById('details-modal')?.classList.remove('hidden');
 }
 
+function handleSheetRename() {
+  if (!state.activeSheetItem) return;
+  const { paneId, name } = state.activeSheetItem;
+  const pane = state.panes[paneId];
+  closeBottomSheet();
+
+  state.activeRenameItem = {
+    paneId,
+    name,
+    remote: pane.remote,
+    path: pane.path
+  };
+
+  const targetInfo = document.getElementById('rename-target-info');
+  const renameInput = document.getElementById('rename-input');
+
+  if (targetInfo) targetInfo.innerText = `Renaming "${name}" in (${pane.remote}):`;
+  if (renameInput) {
+    renameInput.value = name;
+  }
+
+  document.getElementById('rename-modal')?.classList.remove('hidden');
+  if (renameInput) {
+    renameInput.focus();
+    renameInput.select();
+  }
+}
+
+async function confirmRename() {
+  if (!state.activeRenameItem) return;
+
+  const { paneId, name, remote, path } = state.activeRenameItem;
+  const renameInput = document.getElementById('rename-input');
+  const newName = renameInput ? renameInput.value.trim() : '';
+
+  closeModal('rename-modal');
+  state.activeRenameItem = null;
+
+  if (!newName || newName === name) return;
+
+  const oldPath = joinPath(path, name);
+  const newPath = joinPath(path, newName);
+
+  showToast(`Renaming "${name}" to "${newName}"...`, 'info');
+
+  try {
+    await apiCall('api/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        remote: remote,
+        oldPath: oldPath,
+        newPath: newPath
+      })
+    });
+    showToast(`Renamed to "${newName}"`, 'success');
+    loadPane(paneId);
+  } catch (err) {
+    showToast(`Failed to rename: ${err.message}`, 'error');
+  }
+}
+
 // Tab Header Swiping (< 768px)
 function setupTabHeaderSwipe() {
   const mobileNav = document.getElementById('mobile-tabs');
@@ -1794,48 +1946,12 @@ function setupTabHeaderSwipe() {
 
     if (Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
       if (deltaX < 0 && state.activePane === 'left') {
-        // Swipe Left on header -> switch to Right Pane
         switchMobileTab('right');
       } else if (deltaX > 0 && state.activePane === 'right') {
-        // Swipe Right on header -> switch to Left Pane
         switchMobileTab('left');
       }
     }
     headerStartX = 0;
     headerStartY = 0;
   });
-}
-
-
-async function handleSheetRename() {
-  if (!state.activeSheetItem) return;
-  const { paneId, name } = state.activeSheetItem;
-  const pane = state.panes[paneId];
-  closeBottomSheet();
-
-  const newName = prompt(`Rename "${name}" to:`, name);
-  if (!newName || newName.trim() === '' || newName.trim() === name) return;
-
-  const cleanNewName = newName.trim();
-  const srcPath = joinPath(pane.path, name);
-  const dstPath = joinPath(pane.path, cleanNewName);
-
-  showToast(`Renaming "${name}" to "${cleanNewName}"...`, 'info');
-
-  try {
-    await apiCall('api/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        srcRemote: pane.remote,
-        srcPath: srcPath,
-        dstRemote: pane.remote,
-        dstPath: dstPath
-      })
-    });
-    showToast(`Renamed to "${cleanNewName}"`, 'success');
-    loadPane(paneId);
-  } catch (err) {
-    showToast(`Failed to rename: ${err.message}`, 'error');
-  }
 }

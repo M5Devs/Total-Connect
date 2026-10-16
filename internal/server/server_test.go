@@ -493,3 +493,44 @@ func TestServer_HiddenFiles(t *testing.T) {
 		t.Errorf("expected .env file in response when hidden=true")
 	}
 }
+
+func (m *mockStorageEngine) Rename(ctx context.Context, remote, oldPath, newPath string) error {
+	fullOld := buildFullPath(remote, oldPath)
+	fullNew := buildFullPath(remote, newPath)
+	return m.Move(ctx, fullOld, fullNew)
+}
+
+func TestServer_Rename(t *testing.T) {
+	mockEng := newMockEngine()
+	srv := NewServer(mockEng)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	renameBody, _ := json.Marshal(map[string]string{
+		"remote":  "local",
+		"oldPath": "file1.txt",
+		"newPath": "file1_renamed.txt",
+	})
+	res, err := http.Post(ts.URL+"/api/rename", "application/json", bytes.NewBuffer(renameBody))
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("rename API failed: %v, status: %d", err, res.StatusCode)
+	}
+
+	items, err := mockEng.ListEntries(context.Background(), ".")
+	if err != nil {
+		t.Fatalf("ListEntries failed: %v", err)
+	}
+
+	found := false
+	for _, item := range items {
+		if item.Name == "file1_renamed.txt" {
+			found = true
+		}
+		if item.Name == "file1.txt" {
+			t.Errorf("file1.txt should have been renamed")
+		}
+	}
+	if !found {
+		t.Errorf("expected file1_renamed.txt in entries")
+	}
+}

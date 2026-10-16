@@ -15,6 +15,7 @@ type PaneModel struct {
 	ID        string
 	Path      string
 	Items     []models.FileItem
+	Selected  map[int]bool
 	Cursor    int
 	Scroll    int
 	Width     int
@@ -28,6 +29,7 @@ func NewPaneModel(id string, initialPath string) PaneModel {
 		ID:        id,
 		Path:      initialPath,
 		Items:     []models.FileItem{},
+		Selected:  make(map[int]bool),
 		Cursor:    0,
 		Scroll:    0,
 		Width:     40,
@@ -38,6 +40,8 @@ func NewPaneModel(id string, initialPath string) PaneModel {
 }
 
 func (p *PaneModel) SetItems(items []models.FileItem) {
+	p.Selected = make(map[int]bool)
+
 	var dirs []models.FileItem
 	var files []models.FileItem
 
@@ -134,6 +138,74 @@ func (p *PaneModel) SelectedItem() *models.FileItem {
 	return &p.Items[p.Cursor]
 }
 
+func (p *PaneModel) ToggleSelection() {
+	if len(p.Items) == 0 || p.Cursor < 0 || p.Cursor >= len(p.Items) {
+		return
+	}
+	if p.Items[p.Cursor].Name == ".." {
+		p.MoveCursorDown()
+		return
+	}
+
+	if p.Selected == nil {
+		p.Selected = make(map[int]bool)
+	}
+
+	if p.Selected[p.Cursor] {
+		delete(p.Selected, p.Cursor)
+	} else {
+		p.Selected[p.Cursor] = true
+	}
+
+	p.MoveCursorDown()
+}
+
+func (p *PaneModel) SelectPattern(pattern string) {
+	if pattern == "" {
+		return
+	}
+	if p.Selected == nil {
+		p.Selected = make(map[int]bool)
+	}
+	patternLower := strings.ToLower(pattern)
+	for i, item := range p.Items {
+		if item.Name == ".." {
+			continue
+		}
+		matched, err := filepath.Match(patternLower, strings.ToLower(item.Name))
+		if err == nil && matched {
+			p.Selected[i] = true
+		}
+	}
+}
+
+func (p *PaneModel) GetSelectedItems() []models.FileItem {
+	var selected []models.FileItem
+	for idx, isSel := range p.Selected {
+		if isSel && idx >= 0 && idx < len(p.Items) {
+			if p.Items[idx].Name != ".." {
+				selected = append(selected, p.Items[idx])
+			}
+		}
+	}
+
+	if len(selected) > 0 {
+		return selected
+	}
+
+	// Fallback to item under cursor if valid and not ".."
+	item := p.SelectedItem()
+	if item != nil && item.Name != ".." {
+		return []models.FileItem{*item}
+	}
+
+	return nil
+}
+
+func (p *PaneModel) ClearSelection() {
+	p.Selected = make(map[int]bool)
+}
+
 func (p *PaneModel) updateScroll() {
 	visibleRows := p.Height - 4 // border top/bottom, header, title
 	if visibleRows < 1 {
@@ -188,12 +260,20 @@ func (p PaneModel) View(styles Styles) string {
 
 		for i := p.Scroll; i < end; i++ {
 			item := p.Items[i]
-			isSel := i == p.Cursor && p.IsActive
+			isCursor := i == p.Cursor && p.IsActive
+			isMultiSel := p.Selected[i]
+
+			prefix := " "
+			if isMultiSel {
+				prefix = "*"
+			}
 
 			nameStr := item.Name
 			if item.IsDir && item.Name != ".." {
 				nameStr = "/" + item.Name
 			}
+
+			nameWithPrefix := prefix + nameStr
 
 			sizeStr := ""
 			if !item.IsDir {
@@ -212,11 +292,13 @@ func (p PaneModel) View(styles Styles) string {
 				nameWidth = 10
 			}
 
-			rowStr := fmt.Sprintf("%-*s %10s %19s", nameWidth, truncateString(nameStr, nameWidth), sizeStr, modTimeStr)
+			rowStr := fmt.Sprintf("%-*s %10s %19s", nameWidth, truncateString(nameWithPrefix, nameWidth), sizeStr, modTimeStr)
 			rowStr = truncateOrPad(rowStr, contentWidth)
 
-			if isSel {
+			if isCursor {
 				lines = append(lines, styles.SelectedRow.Render(rowStr))
+			} else if isMultiSel {
+				lines = append(lines, styles.MultiSelectedRow.Render(rowStr))
 			} else if item.IsDir {
 				lines = append(lines, styles.DirItem.Render(rowStr))
 			} else {
