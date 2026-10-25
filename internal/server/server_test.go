@@ -534,3 +534,33 @@ func TestServer_Rename(t *testing.T) {
 		t.Errorf("expected file1_renamed.txt in entries")
 	}
 }
+
+func TestServer_AuthEdgeCases(t *testing.T) {
+	// Test malformed auth string (no colon) -> auth should not be enabled
+	srvNoColon := NewServer(newMockEngine(), WithAuth("invalid_no_colon"))
+	tsNoColon := httptest.NewServer(srvNoColon)
+	defer tsNoColon.Close()
+
+	res, err := http.Get(tsNoColon.URL + "/api/remotes")
+	if err != nil {
+		t.Fatalf("failed GET /api/remotes: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for malformed auth without colon (auth disabled), got %d", res.StatusCode)
+	}
+
+	// Test empty auth string -> auth disabled
+	srvEmpty := NewServer(newMockEngine(), WithAuth(""))
+	tsEmpty := httptest.NewServer(srvEmpty)
+	defer tsEmpty.Close()
+
+	res, err = http.Get(tsEmpty.URL + "/api/remotes")
+	if err != nil {
+		t.Fatalf("failed GET /api/remotes: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for empty auth string, got %d", res.StatusCode)
+	}
+}

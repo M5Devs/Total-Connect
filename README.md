@@ -39,7 +39,7 @@ Total Connect is architected with clear boundaries separating the presentation i
 │                          Interfaces / Consumers                        │
 ├───────────────────────────────┬─────────────────────────┬──────────────┤
 │    cmd/tc-tui (Bubbletea TUI) │  cmd/tc-cli (CLI Tool)   │ Web Daemon   │
-│                               │                         │ (Upcoming)   │
+│                               │                         │ (tc-server)  │
 └───────────────┬───────────────┴────────────┬────────────┴──────────────┘
                 │                            │
                 ▼                            ▼
@@ -68,6 +68,7 @@ Total Connect is architected with clear boundaries separating the presentation i
 ### Module Breakdown:
 - **`cmd/tc-tui`**: The interactive Terminal User Interface entry point built on `bubbletea`.
 - **`cmd/tc-cli`**: Command-line execution tool for scriptable tasks and headless operations.
+- **`cmd/tc-server`**: Web daemon serving the web dashboard and REST API for remote management.
 - **`internal/tui`**: UI components including dual navigation panes, reactive status bar with active transfer progress, remote selection modal, and shortcut cheat sheet.
 - **`internal/core`**: `StorageEngine` abstraction layer and `RcloneEngine` implementation utilizing rclone operations natively for atomic file/directory manipulation and progress callbacks.
 - **`internal/config`**: Unified cross-platform config discovery resolving `rclone.conf` paths across Linux, macOS, and Windows.
@@ -124,12 +125,70 @@ Total Connect is designed for speed and productivity with simple keyboard shortc
 
    # Build CLI tool
    go build -o bin/tc-cli ./cmd/tc-cli
+
+   # Build Web Daemon
+   go build -o bin/tc-server ./cmd/tc-server
    ```
 
 4. **Run Unit Tests:**
    ```bash
    go test -v ./...
    ```
+
+---
+
+## 🔒 Security Considerations
+
+### 🔑 Rclone Obfuscation vs. Encryption
+- **Obfuscation Warning**: `rclone obscure` uses weak password obfuscation to prevent casual glance reading of passwords in `rclone.conf`. It is **not encryption** and does not protect credentials against anyone with local filesystem access.
+- **At-Rest Password Encryption**: If you require secure credential storage at rest, encrypt your `rclone.conf` using a master password (`rclone config password`). At runtime, supply your master key via the standard `RCLONE_CONFIG_PASS` environment variable:
+  ```bash
+  export RCLONE_CONFIG_PASS="your-master-password"
+  ./bin/tc-server
+  ```
+
+### 🌐 Web Daemon (`tc-server`) Exposure
+- **Secure Defaults**: By default, `tc-server` listens exclusively on loopback (`127.0.0.1:8080`) to prevent accidental public exposure.
+- **Authentication**: When exposing `tc-server` across networks or on public interfaces (e.g. `0.0.0.0`), authentication is strictly enforced. Set HTTP Basic Auth credentials using the `-auth` flag or `TC_AUTH` environment variable:
+  ```bash
+  # Using command line flag
+  ./bin/tc-server -host 0.0.0.0 -auth "admin:securepassword"
+
+  # Using environment variable
+  export TC_AUTH="admin:securepassword"
+  ./bin/tc-server -host 0.0.0.0
+  ```
+- **Bypassing Auth (Insecure)**: Binding to a public/non-loopback interface without authentication will cause `tc-server` to immediately terminate with a security error. To bypass this check for isolated test setups, explicitly pass `-insecure-no-auth`:
+  ```bash
+  ./bin/tc-server -host 0.0.0.0 -insecure-no-auth
+  ```
+- **Reverse Proxy & TLS**: In production environments, keep `tc-server` bound to `127.0.0.1` and expose it securely behind a reverse proxy (such as Nginx, Caddy, or Cloudflare Tunnel) with HTTPS/TLS enabled.
+
+#### Example Caddy Reverse Proxy Configuration:
+```caddy
+files.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+#### Example Nginx Reverse Proxy Configuration:
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name files.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/files.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/files.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
 
 ---
 
